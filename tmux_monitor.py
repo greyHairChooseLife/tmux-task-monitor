@@ -38,6 +38,11 @@ class TmuxResourceMonitor:
         self.stdscr = None
         self.colors_initialized = False
         self.show_help = False
+        self.process_browsing_active = False
+        self.selected_process_index = 0
+        self.horizontal_scroll_offset = 0
+        self.input_mode = None
+        self.input_buffer = ""
 
     def init_colors(self):
         """Initialize color pairs for curses."""
@@ -53,6 +58,7 @@ class TmuxResourceMonitor:
             curses.init_pair(5, curses.COLOR_BLUE, -1)  # Blue text
             curses.init_pair(6, curses.COLOR_MAGENTA, -1)  # Magenta text
             curses.init_pair(7, curses.COLOR_WHITE, curses.COLOR_BLUE)  # White on blue
+            curses.init_pair(8, curses.COLOR_WHITE, curses.COLOR_RED)  # White on red for selected process
 
             self.colors_initialized = True
 
@@ -378,6 +384,134 @@ class TmuxResourceMonitor:
             available_content_lines - 3
         )  # -3 for header, separator, totals
 
+        # Ensure selected process index is within bounds
+        if window.processes:
+            if self.selected_process_index >= len(window.processes):
+                self.selected_process_index = len(window.processes) - 1
+            if self.selected_process_index < 0:
+                self.selected_process_index = 0
+        else:
+            self.selected_process_index = 0
+            self.process_browsing_active = False
+
+        # Process list
+        displayed_processes = 0
+        first_displayed_process = 0
+        
+        # If browsing is active, try to keep selected process visible
+        if self.process_browsing_active and window.processes:
+            if self.selected_process_index >= lines_for_processes:
+                first_displayed_process = self.selected_process_index - lines_for_processes + 1
+
+        for process_idx, process in enumerate(window.processes):
+            if process_idx < first_displayed_process:
+                continue
+            if displayed_processes >= lines_for_processes:
+                break
+
+            indent = "  " * process["depth"]
+            mem_str = self.format_memory(process["memory_kb"])
+
+            # Calculate available space for command
+            fixed_width = (
+                8 + 6 + 12 + 3 + len(indent)
+            )  # PID + CPU + MEMORY + spaces + indent
+            max_cmd_len = width - fixed_width - 1  # Leave 1 char margin
+
+            command = process["command"]
+            
+            # Apply horizontal scroll if browsing is active
+            if self.process_browsing_active and process_idx == self.selected_process_index:
+                if len(command) > max_cmd_len:
+                    command = command[self.horizontal_scroll_offset:self.horizontal_scroll_offset + max_cmd_len]
+                    if self.horizontal_scroll_offset > 0:
+                        command = "<<" + command[2:]
+                    if self.horizontal_scroll_offset + max_cmd_len < len(process["command"]):
+                        command = command[:-2] + ">>"
+                else:
+                    command = command[:max_cmd_len]
+            else:
+                # Only truncate if command is actually too long for the available space
+                if len(command) > max_cmd_len and max_cmd_len > 3:
+                    command = command[: max_cmd_len - 3] + "..."
+
+            line = f"{process['pid']:>8} {process['cpu']:>6.1f} {mem_str:>12} {indent}{command}"
+            # Final safety check - only truncate if line exceeds terminal width
+            if len(line) > width - 1:
+                line = line[: width - 4] + "..."
+
+            # Determine color and styling
+            is_selected = self.process_browsing_active and process_idx == self.selected_process_index
+            color = curses.color_pair(1) if process['cpu'] > 10 else curses.color_pair(0)
+            
+            if is_selected:
+                color = color | curses.A_REVERSE
+            
+            try:
+                stdscr.addstr(y_pos, 0, line, color)
+            except curses.error:
+                break  # Stop if we can't draw more
+            y_pos += 1
+            displayed_processes += 1
+
+        # Window totals - always show at bottom
+        # Move to the line just before footer
+        totals_y = height - 2
+
+        window_ram_mb = window.ram_total // 1024
+        window_ram_percent = (window.ram_total * 100) / (self.total_ram_mb * 1024)
+        total_line = f"TOTAL: CPU {window.cpu_total:.1f}% | RAM {window_ram_mb}MB ({window_ram_percent:.1f}%) | Processes {window.process_count}"
+
+        if len(total_line) > width - 1:
+            total_line = total_line[:width-4] + "..."
+
+        try:
+            stdscr.addstr(totals_y, 0, total_line, curses.color_pair(1) | curses.A_BOLD)
+        except curses.error:
+            pass
+
+        return y_pos
+
+        # Ensure current_tab is within bounds
+        if self.current_tab >= len(self.windows_data):
+            self.current_tab = 0
+        if self.current_tab < 0:
+            self.current_tab = len(self.windows_data) - 1
+
+        window = self.windows_data[self.current_tab]
+
+        # Calculate available space - reserve space for window totals at bottom
+        # We need: window header, table header, separator, and totals line at minimum
+        min_required_lines = 4
+        available_content_lines = height - y_pos - 2  # Leave space for footer
+
+        if available_content_lines < min_required_lines:
+            # Not enough space, show minimal info
+            return y_pos
+
+        # Window header
+        window_header = (
+            f"Window: {window.name} ({window.index}) - {len(window.pane_pids)} panes"
+        )
+        stdscr.addstr(y_pos, 0, window_header, curses.color_pair(2) | curses.A_BOLD)
+        y_pos += 1
+
+        # Process table header
+        header = f"{'PID':>8} {'CPU%':>6} {'MEMORY':>12} COMMAND"
+        stdscr.addstr(y_pos, 0, header, curses.color_pair(3) | curses.A_BOLD)
+        y_pos += 1
+
+        # Separator line
+        separator = "-" * min(width - 1, 60)
+        stdscr.addstr(y_pos, 0, separator, curses.color_pair(5))
+        y_pos += 1
+
+        # Calculate how many lines we can use for process list
+        # Reserve 1 line for totals at the bottom
+        lines_for_processes = (
+            available_content_lines - 3
+        )  # -3 for header, separator, totals
+
         # Process list
         displayed_processes = 0
 
@@ -449,6 +583,13 @@ class TmuxResourceMonitor:
             "  q or Q                Exit the monitor",
             "  ?                     Show/hide this help screen",
             "",
+            "Process Browsing (press j or down to start):",
+            "  j/k or up/down        Navigate up/down through processes",
+            "  Alt+h/l or Alt+<- ->  Scroll long command lines horizontally",
+            "  x                     Send SIGTERM (15) to selected process",
+            "  s                     Enter signal number to send custom signal",
+            "  <- -> or h l          Navigate between windows (works in all modes)",
+            "",
             "Display:",
             "  Header                Shows session name and total resource usage",
             "  Tabs                  Shows available windows (current window is highlighted)",
@@ -459,10 +600,11 @@ class TmuxResourceMonitor:
             "  • Session summary with total resource usage",
             "  • Interactive window navigation",
             "  • Process tree visualization for selected window",
+            "  • Process selection and signal sending",
             "  • Real-time updates",
             "  • Lightweight curses-based interface",
             "",
-            "Press any key to return to the monitor...",
+            "Press any key to return to the monitor..."
         ]
 
         start_y = max(0, (height - len(help_lines)) // 2)
@@ -471,18 +613,39 @@ class TmuxResourceMonitor:
             if start_y + i < height - 1:
                 try:
                     if i == 0:
-                        stdscr.addstr(
-                            start_y + i,
-                            (width - len(line)) // 2,
-                            line,
-                            curses.color_pair(3) | curses.A_BOLD,
-                        )
+                        stdscr.addstr(start_y + i, (width - len(line)) // 2, line, curses.color_pair(3) | curses.A_BOLD)
                     else:
                         stdscr.addstr(start_y + i, 0, line, curses.color_pair(0))
                 except curses.error:
                     pass
 
         stdscr.refresh()
+    
+    def draw_input_prompt(self, stdscr, height, width):
+        """Draw input prompt for signal number."""
+        if not self.windows_data:
+            return
+        
+        window = self.windows_data[self.current_tab]
+        if not window.processes or self.selected_process_index >= len(window.processes):
+            return
+        
+        process = window.processes[self.selected_process_index]
+        prompt = f"Send signal to PID {process['pid']}: [ {self.input_buffer} ]"
+        
+        # Draw prompt just above the footer
+        prompt_y = height - 2
+        
+        try:
+            # Clear the line first
+            stdscr.move(prompt_y, 0)
+            stdscr.clrtoeol()
+            # Draw prompt
+            stdscr.addstr(prompt_y, 0, prompt, curses.color_pair(3) | curses.A_BOLD)
+            stdscr.move(prompt_y, len(prompt) - len(self.input_buffer) - 2)
+            stdscr.refresh()
+        except curses.error:
+            pass
 
     def next_tab(self):
         """Switch to next tab."""
@@ -493,6 +656,23 @@ class TmuxResourceMonitor:
         """Switch to previous tab."""
         if self.windows_data:
             self.current_tab = (self.current_tab - 1) % len(self.windows_data)
+    
+    def send_signal_to_process(self, signal_number):
+        """Send a signal to the currently selected process."""
+        if not self.windows_data:
+            return False
+        
+        window = self.windows_data[self.current_tab]
+        if not window.processes or self.selected_process_index >= len(window.processes):
+            return False
+        
+        process = window.processes[self.selected_process_index]
+        try:
+            proc = psutil.Process(process['pid'])
+            proc.send_signal(signal_number)
+            return True
+        except (psutil.NoSuchProcess, psutil.AccessDenied):
+            return False
 
     def handle_input(self, stdscr):
         """Handle keyboard input - no separate thread to avoid curses issues."""
@@ -501,6 +681,61 @@ class TmuxResourceMonitor:
         try:
             key = stdscr.getch()
             if key != -1:  # Key was pressed
+                # Handle Alt key combinations first
+                if key == 27:  # ESC - could be Alt+key or just ESC
+                    # Try to detect Alt+key by checking for another key quickly
+                    stdscr.timeout(50)  # Short timeout to detect Alt
+                    next_key = stdscr.getch()
+                    stdscr.timeout(-1)  # Reset to blocking
+                    stdscr.nodelay(True)  # Set back to non-blocking
+                    
+                    if next_key != -1:  # Alt+key combination
+                        # Alt+key detected
+                        alt_key = next_key
+                        if self.process_browsing_active and self.windows_data:
+                            window = self.windows_data[self.current_tab]
+                            if window.processes and self.selected_process_index < len(window.processes):
+                                process = window.processes[self.selected_process_index]
+                                command = process['command']
+                                
+                                # Calculate available space for command
+                                indent = "  " * process["depth"]
+                                fixed_width = 8 + 6 + 12 + 3 + len(indent)
+                                height, width = stdscr.getmaxyx()
+                                max_cmd_len = width - fixed_width - 1
+                                
+                                if alt_key == curses.KEY_LEFT or alt_key == ord('h') or alt_key == ord('H'):
+                                    # Scroll left
+                                    self.horizontal_scroll_offset = max(0, self.horizontal_scroll_offset - 10)
+                                elif alt_key == curses.KEY_RIGHT or alt_key == ord('l') or alt_key == ord('L'):
+                                    # Scroll right
+                                    max_offset = max(0, len(command) - max_cmd_len + 4)  # +4 for << and >>
+                                    self.horizontal_scroll_offset = min(max_offset, self.horizontal_scroll_offset + 10)
+                        return
+                    # If we get here, it was just ESC, continue processing below
+                
+                # Handle input mode (signal number entry)
+                if self.input_mode == 'signal':
+                    if key == 10 or key == 13:  # Enter
+                        if self.input_buffer.strip():
+                            try:
+                                signal_number = int(self.input_buffer.strip())
+                                self.send_signal_to_process(signal_number)
+                            except ValueError:
+                                pass  # Invalid number, ignore
+                        self.input_mode = None
+                        self.input_buffer = ""
+                    elif key == 27:  # ESC
+                        self.input_mode = None
+                        self.input_buffer = ""
+                    elif key == curses.KEY_BACKSPACE or key == 127:
+                        if self.input_buffer:
+                            self.input_buffer = self.input_buffer[:-1]
+                    elif 48 <= key <= 57:  # 0-9
+                        self.input_buffer += chr(key)
+                    return
+                
+                # Normal mode or process browsing mode
                 if key == ord("q") or key == ord("Q"):
                     self.running = False
                 elif key == ord("?"):
@@ -517,6 +752,26 @@ class TmuxResourceMonitor:
                     self.prev_tab()
                 elif key == curses.KEY_RIGHT or key == ord("l") or key == ord("L"):
                     self.next_tab()
+                elif key == ord("j") or key == curses.KEY_DOWN:
+                    # Enter or continue process browsing mode
+                    if self.windows_data and self.windows_data[self.current_tab].processes:
+                        self.process_browsing_active = True
+                        window = self.windows_data[self.current_tab]
+                        if self.selected_process_index < len(window.processes) - 1:
+                            self.selected_process_index += 1
+                elif key == ord("k") or key == curses.KEY_UP:
+                    # Move up in process browsing mode
+                    if self.process_browsing_active and self.selected_process_index > 0:
+                        self.selected_process_index -= 1
+                elif key == ord("x") or key == ord("X"):
+                    # Send SIGTERM to selected process
+                    if self.process_browsing_active:
+                        self.send_signal_to_process(15)  # SIGTERM
+                elif key == ord("s") or key == ord("S"):
+                    # Enter signal input mode
+                    if self.process_browsing_active:
+                        self.input_mode = 'signal'
+                        self.input_buffer = ""
                 elif key == 3:  # Ctrl+C
                     self.running = False
         except curses.error:
@@ -572,7 +827,8 @@ class TmuxResourceMonitor:
 
                 self.handle_input(stdscr)
 
-                if current_time - last_refresh >= self.refresh_rate:
+                # Only refresh data if not in input mode
+                if not self.input_mode and current_time - last_refresh >= self.refresh_rate:
                     self.collect_window_data()
                     last_refresh = current_time
 
@@ -587,7 +843,14 @@ class TmuxResourceMonitor:
                         y_pos = self.draw_header(stdscr, height, width)
                         y_pos = self.draw_tabs(stdscr, y_pos, height, width)
                         self.draw_window_details(stdscr, y_pos, height, width)
-                        self.draw_footer(stdscr, height, width)
+                        
+                        # Draw input prompt if in signal input mode
+                        if self.input_mode == 'signal':
+                            curses.curs_set(1)  # Show cursor
+                            self.draw_input_prompt(stdscr, height, width)
+                        else:
+                            curses.curs_set(0)  # Hide cursor
+                            self.draw_footer(stdscr, height, width)
 
                         # Refresh screen?
                         stdscr.refresh()
