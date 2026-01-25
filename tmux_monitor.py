@@ -5,6 +5,7 @@ tmux-resource-monitor-curses.py - Lightweight and simple tmux resource monitor u
 
 import argparse
 import curses
+import os
 import signal
 import subprocess
 import sys
@@ -970,6 +971,21 @@ class TmuxResourceMonitor:
             print("Monitoring stopped.")
 
 
+def read_tmux_option(option, default=""):
+    """Read a tmux option value."""
+    try:
+        result = subprocess.run(
+            ["tmux", "show-option", "-gqv", f"@{option}"],
+            capture_output=True,
+            text=True,
+        )
+        if result.stdout and result.stdout.strip():
+            return result.stdout.strip()
+        return default
+    except (subprocess.CalledProcessError, FileNotFoundError):
+        return default
+
+
 def signal_handler(signum, frame):
     """Handle Ctrl+C gracefully."""
     sys.exit(0)
@@ -988,6 +1004,11 @@ Examples:
   %(prog)s blog -r 1.0             # Refresh every 1 second
   %(prog)s blog -w editor -r 0.5   # Start on 'editor' window, refresh every 0.5s
 
+Note: When used as a tmux plugin, options can also be set via .tmux.conf:
+  set -g @tmux_resource_monitor_refresh_rate "2.0"
+  set -g @tmux_resource_monitor_width "80%"
+  set -g @tmux_resource_monitor_height "40%"
+
 Press '?' in the monitor for keyboard controls.
 
 Features:
@@ -996,23 +1017,25 @@ Features:
   • Process tree visualization for selected window
   • Real-time updates
   • Lightweight curses-based interface
-        """,
+  • Works standalone or as tmux plugin
+        """
     )
 
-    parser.add_argument("session_name", help="Name of the tmux session to monitor")
+    parser.add_argument("session_name", help="Name of the tmux session to monitor", default=None)
 
     parser.add_argument(
         "-w",
         "--window",
         dest="window_filter",
         help="Start monitoring on specific window name",
+        default=None,
     )
 
     parser.add_argument(
         "-r",
         "--refresh-rate",
         type=float,
-        default=2.0,
+        default=None,
         help="Refresh rate in seconds (default: 2.0)",
     )
 
@@ -1045,12 +1068,36 @@ Features:
             print("Error: Could not list tmux sessions. Is tmux running?")
         return
 
-    if args.refresh_rate <= 0:
+    # Determine session name (CLI arg or tmux option)
+    session_name = args.session_name
+    if not session_name:
+        # Try to read from tmux environment if available
+        session_name = os.environ.get('TMUX_SESSION_NAME', None)
+
+    # Determine window filter (CLI arg or tmux option)
+    window_filter = args.window_filter
+    if not window_filter:
+        window_filter = read_tmux_option('tmux_resource_monitor_window_filter')
+        if not window_filter:
+            window_filter = None
+
+    # Determine refresh rate (CLI arg or tmux option)
+    refresh_rate = args.refresh_rate
+    if refresh_rate is None:
+        refresh_rate_str = read_tmux_option('tmux_resource_monitor_refresh_rate')
+        if not refresh_rate_str:
+            refresh_rate_str = "2.0"
+        try:
+            refresh_rate = float(refresh_rate_str)
+        except ValueError:
+            refresh_rate = 2.0
+
+    if refresh_rate <= 0:
         print("Error: Refresh rate must be positive")
         sys.exit(1)
 
     monitor = TmuxResourceMonitor(
-        args.session_name, args.window_filter, args.refresh_rate
+        session_name, window_filter, refresh_rate
     )
 
     monitor.run()
