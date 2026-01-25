@@ -278,17 +278,44 @@ class TmuxResourceMonitor:
                 else 0
             )
 
-            title = f"Tmux Resource Monitor - Session: {self.session_name}"
-            title = title[: width - 1]  
-            x_pos = max(0, (width - len(title)) // 2)
-            stdscr.addstr(0, x_pos, title, curses.color_pair(3) | curses.A_BOLD)
+            # Title line - session name with highlighted "Session:"
+            x_pos = max(0, (width - len(f"Session: {self.session_name}")) // 2)
+            stdscr.addstr(0, x_pos, "Session:", curses.color_pair(2) | curses.A_REVERSE | curses.A_BOLD)
+            stdscr.addstr(0, x_pos + 8, " ", curses.color_pair(3))
+            stdscr.addstr(0, x_pos + 9, self.session_name, curses.color_pair(3) | curses.A_BOLD)
 
-            # Summary line
-            summary = f"Windows: {len(self.windows_data)} | CPU: {total_cpu:.1f}% | RAM: {total_ram_mb}MB ({total_ram_percent:.1f}%) | Processes: {total_processes}"
-            if len(summary) > width - 2:
-                summary = summary[: width - 5] + "..."
-            x_pos = max(0, (width - len(summary)) // 2)
-            stdscr.addstr(1, x_pos, summary, curses.color_pair(1))
+            # Summary line with different colors for labels, values, and separators
+            summary_parts = [
+                ("Windows: ", curses.color_pair(2)),
+                (str(len(self.windows_data)), curses.color_pair(1)),
+                (" | ", curses.color_pair(5)),
+                ("CPU: ", curses.color_pair(2)),
+                (f"{total_cpu:.1f}%", curses.color_pair(1)),
+                (" | ", curses.color_pair(5)),
+                ("MEM: ", curses.color_pair(2)),
+                (f"{total_ram_mb}MB", curses.color_pair(1)),
+                (f" ({total_ram_percent:.1f}%)", curses.color_pair(1)),
+                (" | ", curses.color_pair(5)),
+                ("Processes: ", curses.color_pair(2)),
+                (str(total_processes), curses.color_pair(1))
+            ]
+            
+            # Build the full string and calculate positions for colored segments
+            full_summary = "".join(part[0] for part in summary_parts)
+            if len(full_summary) > width - 2:
+                full_summary = full_summary[: width - 5] + "..."
+            
+            x_pos = max(0, (width - len(full_summary)) // 2)
+            current_x = x_pos
+            
+            for text, color in summary_parts:
+                if current_x + len(text) > width - 1:
+                    break
+                try:
+                    stdscr.addstr(1, current_x, text, color)
+                    current_x += len(text)
+                except curses.error:
+                    break
 
         except curses.error:
             pass  # Skip drawing if there's an error
@@ -301,8 +328,10 @@ class TmuxResourceMonitor:
             return y_pos + 1
 
         x_pos = 0
-        stdscr.addstr(y_pos, x_pos, "Windows: ", curses.color_pair(2))
-        x_pos += 9
+        stdscr.addstr(y_pos, x_pos, "Windows", curses.color_pair(6) | curses.A_BOLD)
+        x_pos += 7
+        stdscr.addstr(y_pos, x_pos, ": ", curses.color_pair(3))
+        x_pos += 2
 
         for i, window in enumerate(self.windows_data):
             if i > 0:
@@ -361,15 +390,31 @@ class TmuxResourceMonitor:
             # Not enough space, show minimal info
             return y_pos
 
-        # Window header
-        window_header = (
-            f"Window: {window.name} ({window.index}) - {len(window.pane_pids)} panes"
-        )
-        stdscr.addstr(y_pos, 0, window_header, curses.color_pair(2) | curses.A_BOLD)
+        # Window header with different colors for label, values, and separators
+        window_parts = [
+            ("Window", curses.color_pair(6) | curses.A_BOLD),
+            (": ", curses.color_pair(3)),
+            (window.name, curses.color_pair(2) | curses.A_BOLD),
+            (f" ({window.index})", curses.color_pair(1) | curses.A_BOLD),
+            (" - ", curses.color_pair(5)),
+            (f"{len(window.pane_pids)}", curses.color_pair(1) | curses.A_BOLD),
+            (" panes", curses.color_pair(2))
+        ]
+        
+        current_x = 0
+        for text, color in window_parts:
+            if current_x + len(text) > width - 1:
+                break
+            try:
+                stdscr.addstr(y_pos, current_x, text, color)
+                current_x += len(text)
+            except curses.error:
+                break
+        
         y_pos += 1
 
         # Process table header
-        header = f"{'PID':>8} {'CPU%':>6} {'MEMORY':>12} COMMAND"
+        header = f"{'PID':>8} {'CPU%':>6} {'MEM':>12} COMMAND"
         stdscr.addstr(y_pos, 0, header, curses.color_pair(3) | curses.A_BOLD)
         y_pos += 1
 
@@ -470,43 +515,10 @@ class TmuxResourceMonitor:
         except curses.error:
             pass
 
-        return y_pos
-
-        # Ensure current_tab is within bounds  # TODO: no path to this? 
-        if self.current_tab >= len(self.windows_data):
-            self.current_tab = 0
-        if self.current_tab < 0:
-            self.current_tab = len(self.windows_data) - 1
-
-        window = self.windows_data[self.current_tab]
-
-        # Calculate available space - reserve space for window totals at bottom
-        # We need: window header, table header, separator, and totals line at minimum
-        min_required_lines = 4
-        available_content_lines = height - y_pos - 2  # Leave space for footer
-
-        if available_content_lines < min_required_lines:
-            # Not enough space, show minimal info
             return y_pos
-
-        # Window header
-        window_header = (
-            f"Window: {window.name} ({window.index}) - {len(window.pane_pids)} panes"
-        )
-        stdscr.addstr(y_pos, 0, window_header, curses.color_pair(2) | curses.A_BOLD)
-        y_pos += 1
-
-        # Process table header
-        header = f"{'PID':>8} {'CPU%':>6} {'MEMORY':>12} COMMAND"
-        stdscr.addstr(y_pos, 0, header, curses.color_pair(3) | curses.A_BOLD)
-        y_pos += 1
-
-        # Separator line
-        separator = "-" * min(width - 1, 60)
-        stdscr.addstr(y_pos, 0, separator, curses.color_pair(5))
-        y_pos += 1
-
-        # Calculate how many lines we can use for process list
+ 
+        # Move to the line just before footer
+        totals_y = height - 2
         # Reserve 1 line for totals at the bottom
         lines_for_processes = (
             available_content_lines - 3
@@ -554,15 +566,31 @@ class TmuxResourceMonitor:
 
         window_ram_mb = window.ram_total // 1024
         window_ram_percent = (window.ram_total * 100) / (self.total_ram_mb * 1024)
-        total_line = f"TOTAL: CPU {window.cpu_total:.1f}% | RAM {window_ram_mb}MB ({window_ram_percent:.1f}%) | Processes {window.process_count}"
-
-        if len(total_line) > width - 1:
-            total_line = total_line[: width - 4] + "..."
-
-        try:
-            stdscr.addstr(totals_y, 0, total_line, curses.color_pair(1) | curses.A_BOLD)
-        except curses.error:
-            pass
+        # Build TOTAL line with different colors for labels, values, and separators
+        total_parts = [
+            ("TOTAL:", curses.color_pair(6) | curses.A_BOLD),
+            (" CPU ", curses.color_pair(3)),
+            (f"{window.cpu_total:.1f}%", curses.color_pair(1) | curses.A_BOLD),
+            (" | ", curses.color_pair(5)),
+            ("MEM ", curses.color_pair(3)),
+            (f"{window_ram_mb}MB", curses.color_pair(1) | curses.A_BOLD),
+            (f" ({window_ram_percent:.1f}%)", curses.color_pair(1) | curses.A_BOLD),
+            (" | ", curses.color_pair(5)),
+            ("Processes ", curses.color_pair(3)),
+            (str(window.process_count), curses.color_pair(1) | curses.A_BOLD)
+        ]
+        
+        full_total = "".join(part[0] for part in total_parts)
+        
+        current_x = 0
+        for text, color in total_parts:
+            if current_x + len(text) > width - 1:
+                break
+            try:
+                stdscr.addstr(totals_y, current_x, text, color)
+                current_x += len(text)
+            except curses.error:
+                break
 
         return y_pos
 
