@@ -472,7 +472,7 @@ class TmuxResourceMonitor:
 
         return y_pos
 
-        # Ensure current_tab is within bounds
+        # Ensure current_tab is within bounds  # TODO: no path to this? 
         if self.current_tab >= len(self.windows_data):
             self.current_tab = 0
         if self.current_tab < 0:
@@ -588,6 +588,8 @@ class TmuxResourceMonitor:
             "  Alt+h/l or Alt+<- ->  Scroll long command lines horizontally",
             "  x                     Send SIGTERM (15) to selected process",
             "  s                     Enter signal number to send custom signal",
+            "  y                     Copy process command to clipboard",
+            "  Y                     Copy process PID to clipboard",
             "  <- -> or h l          Navigate between windows (works in all modes)",
             "",
             "Display:",
@@ -673,6 +675,62 @@ class TmuxResourceMonitor:
             return True
         except (psutil.NoSuchProcess, psutil.AccessDenied):
             return False
+    
+    def copy_to_clipboard(self, text):
+        """Copy text to clipboard using available clipboard tools (Wayland/X11)."""
+        def try_command(cmd):
+            process = None
+            try:
+                process = subprocess.Popen(
+                    cmd,
+                    stdin=subprocess.PIPE,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.DEVNULL
+                )
+                stdout, stderr = process.communicate(input=text.encode('utf-8'))
+                return process.returncode == 0
+            except FileNotFoundError:
+                return False
+            except Exception as e:
+                return False
+        
+        # Try wl-copy first (Wayland)
+        if try_command(['wl-copy']):
+            return True
+        
+        # Fallback to xclip (X11)
+        if try_command(['xclip', '-selection', 'clipboard']):
+            return True
+        
+        # Fallback to xsel (X11)
+        if try_command(['xsel', '--clipboard', '--input']):
+            return True
+        
+        return False
+    
+    def copy_process_command(self):
+        """Copy the selected process's command to clipboard."""
+        if not self.windows_data:
+            return False
+        
+        window = self.windows_data[self.current_tab]
+        if not window.processes or self.selected_process_index >= len(window.processes):
+            return False
+        
+        process = window.processes[self.selected_process_index]
+        return self.copy_to_clipboard(process['command'])
+    
+    def copy_process_pid(self):
+        """Copy the selected process's PID to clipboard."""
+        if not self.windows_data:
+            return False
+        
+        window = self.windows_data[self.current_tab]
+        if not window.processes or self.selected_process_index >= len(window.processes):
+            return False
+        
+        process = window.processes[self.selected_process_index]
+        return self.copy_to_clipboard(str(process['pid']))
 
     def handle_input(self, stdscr):
         """Handle keyboard input - no separate thread to avoid curses issues."""
@@ -767,6 +825,14 @@ class TmuxResourceMonitor:
                     # Send SIGTERM to selected process
                     if self.process_browsing_active:
                         self.send_signal_to_process(15)  # SIGTERM
+                elif key == ord("y"):
+                    # Copy process command to clipboard
+                    if self.process_browsing_active:
+                        self.copy_process_command()
+                elif key == ord("Y"):
+                    # Copy process PID to clipboard
+                    if self.process_browsing_active:
+                        self.copy_process_pid()
                 elif key == ord("s") or key == ord("S"):
                     # Enter signal input mode
                     if self.process_browsing_active:
