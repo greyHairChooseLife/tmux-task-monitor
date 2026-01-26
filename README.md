@@ -5,15 +5,10 @@ A tmux plugin for monitoring resource usage (CPU and memory) of the children pro
 
 ## Problem
 
-You may have access to a full list of processes on `htop`, but how often do you have to look for the right instance of the server to restart?
-How often are you trying to understand which process belongs to what within the context of your project?
-Have you ever wondered which instance of tsserver/rust-analyzer to kill to get half your RAM back?
+You may have access to a full list of processes on `htop`, but how often do you have to look for the right instance of the server to restart?  
+How often are you trying to understand which process belongs to what within the context of your project?  
+Have you ever wondered which instance of tsserver/rust-analyzer to kill to get half your RAM back?  
 
-- understand what spawns what (mcp, lsp)
-- find the project/branch relevant processes in a htop sea 
-- get the pid, send custom commands
-- troubleshoot a workspace by getting the command of a process
-- understanding resource usage on local machine in a meaninful way
 
 ## Solution and features
 
