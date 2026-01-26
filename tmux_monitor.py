@@ -135,6 +135,7 @@ class TmuxResourceMonitor:
             curses.init_pair(6, curses.COLOR_MAGENTA, -1)  # Magenta text
             curses.init_pair(7, curses.COLOR_WHITE, curses.COLOR_BLUE)  # White on blue
             curses.init_pair(8, curses.COLOR_WHITE, curses.COLOR_RED)  # White on red for selected process
+            curses.init_pair(9, curses.COLOR_GREEN, -1)  # Tree symbols in green
 
             self.colors_initialized = True
 
@@ -143,6 +144,34 @@ class TmuxResourceMonitor:
         mb = rss_kb // 1024
         percent = (rss_kb * 100) / (self.total_ram_mb * 1024)
         return f"{mb:4d} MB ({percent:5.1f}%)"
+
+    def get_tree_prefix(self, process, processes, index):
+        """Generate tree prefix string for a process."""
+        if process["depth"] == 0:
+            return ""
+
+        depth = process["depth"]
+        prefix_parts = []
+
+        for level in range(depth - 1):
+            # Check if there's a process at this level with a sibling below
+            has_sibling_below = False
+            for i in range(index + 1, len(processes)):
+                if processes[i]["depth"] == level:
+                    has_sibling_below = True
+                    break
+                elif processes[i]["depth"] < level:
+                    break
+            prefix_parts.append("│" if has_sibling_below else " ")
+            prefix_parts.append("  ")
+
+        # Current level
+        if process["is_last_child"]:
+            prefix_parts.append("└─")
+        else:
+            prefix_parts.append("├─")
+
+        return "".join(prefix_parts)
 
     def get_tmux_sessions(self):
         """Get list of available tmux sessions."""
@@ -322,8 +351,8 @@ class TmuxResourceMonitor:
         except subprocess.CalledProcessError:
             return []
 
-    def get_process_info(self, pid, depth=0):
-        """Get process info recursively."""
+    def get_process_info(self, pid, depth=0, parent_last_child=None):
+        """Get process info recursively with tree structure."""
         processes = []
         try:
             parent = psutil.Process(pid)
@@ -333,12 +362,14 @@ class TmuxResourceMonitor:
                 rss_kb = memory_info.rss // 1024
                 cmdline_parts = parent.cmdline()
                 if cmdline_parts:
-                    executable = cmdline_parts[0].split("/")[-1]  # ? Remove path
+                    executable = cmdline_parts[0].split("/")[-1]
                     args = cmdline_parts[1:] if len(cmdline_parts) > 1 else []
                     cmdline = executable + (" " + " ".join(args) if args else "")
                 else:
                     cmdline = parent.name()
 
+                children = list(parent.children())
+                is_last_child = parent_last_child if parent_last_child is not None else False
 
                 processes.append(
                     {
@@ -347,12 +378,16 @@ class TmuxResourceMonitor:
                         "memory_kb": rss_kb,
                         "command": cmdline,
                         "depth": depth,
+                        "is_last_child": is_last_child,
+                        "has_children": len(children) > 0,
                     }
                 )
 
                 try:
-                    for child in parent.children():
-                        processes.extend(self.get_process_info(child.pid, depth + 1))
+                    for idx, child in enumerate(children):
+                        child_is_last = (idx == len(children) - 1)
+                        child_processes = self.get_process_info(child.pid, depth + 1, child_is_last)
+                        processes.extend(child_processes)
                 except (psutil.NoSuchProcess, psutil.AccessDenied):
                     pass
 
@@ -645,18 +680,14 @@ class TmuxResourceMonitor:
             if displayed_processes >= lines_for_processes:
                 break
 
-            indent = "  " * process["depth"]
+            tree_prefix = self.get_tree_prefix(process, window.processes, process_idx)
             mem_str = self.format_memory(process["memory_kb"])
 
-            # Calculate available space for command
-            fixed_width = (
-                8 + 6 + 12 + 3 + len(indent)
-            )  # PID + CPU + MEMORY + spaces + indent
-            max_cmd_len = width - fixed_width - 1  # Leave 1 char margin
+            fixed_width = 8 + 6 + 12 + 3 + len(tree_prefix)
+            max_cmd_len = width - fixed_width - 1
 
             command = process["command"]
             
-            # Apply horizontal scroll if browsing is active
             if self.process_browsing_active and process_idx == self.selected_process_index:
                 if len(command) > max_cmd_len:
                     command = command[self.horizontal_scroll_offset:self.horizontal_scroll_offset + max_cmd_len]
@@ -667,16 +698,14 @@ class TmuxResourceMonitor:
                 else:
                     command = command[:max_cmd_len]
             else:
-                # Only truncate if command is actually too long for the available space
                 if len(command) > max_cmd_len and max_cmd_len > 3:
                     command = command[: max_cmd_len - 3] + "..."
 
-            line = f"{process['pid']:>8} {process['cpu']:>6.1f} {mem_str:>12} {indent}{command}"
-            # Final safety check - only truncate if line exceeds terminal width
+            line = f"{process['pid']:>8} {process['cpu']:>6.1f} {mem_str:>12} {tree_prefix} {command}"
+
             if len(line) > width - 1:
                 line = line[: width - 4] + "..."
 
-            # Determine color and styling
             is_selected = self.process_browsing_active and process_idx == self.selected_process_index
             color = curses.color_pair(1) if process['cpu'] > 10 else curses.color_pair(0)
             
@@ -684,9 +713,18 @@ class TmuxResourceMonitor:
                 color = color | curses.A_REVERSE
             
             try:
+                # Draw the base line
                 stdscr.addstr(y_pos, 0, line, color)
+                
+                # Draw tree prefix in different color
+                if tree_prefix:
+                    x_pos = 8 + 6 + 12 + 3  # PID + CPU + MEM + spaces
+                    tree_color = curses.color_pair(9)
+                    if is_selected:
+                        tree_color = tree_color | curses.A_REVERSE
+                    stdscr.addstr(y_pos, x_pos, tree_prefix, tree_color)
             except curses.error:
-                break  # Stop if we can't draw more
+                break
             y_pos += 1
             displayed_processes += 1
 
@@ -994,18 +1032,15 @@ class TmuxResourceMonitor:
                                 process = window.processes[self.selected_process_index]
                                 command = process['command']
                                 
-                                # Calculate available space for command
-                                indent = "  " * process["depth"]
-                                fixed_width = 8 + 6 + 12 + 3 + len(indent)
+                                tree_prefix = self.get_tree_prefix(process, window.processes, self.selected_process_index)
+                                fixed_width = 8 + 6 + 12 + 3 + len(tree_prefix) + 1
                                 height, width = stdscr.getmaxyx()
                                 max_cmd_len = width - fixed_width - 1
                                 
                                 if alt_key == curses.KEY_LEFT or alt_key == ord('h') or alt_key == ord('H'):
-                                    # Scroll left
                                     self.horizontal_scroll_offset = max(0, self.horizontal_scroll_offset - 10)
                                 elif alt_key == curses.KEY_RIGHT or alt_key == ord('l') or alt_key == ord('L'):
-                                    # Scroll right
-                                    max_offset = max(0, len(command) - max_cmd_len + 4)  # +4 for << and >>
+                                    max_offset = max(0, len(command) - max_cmd_len + 4)
                                     self.horizontal_scroll_offset = min(max_offset, self.horizontal_scroll_offset + 10)
                         return
                     # If we get here, it was just ESC, continue processing below
