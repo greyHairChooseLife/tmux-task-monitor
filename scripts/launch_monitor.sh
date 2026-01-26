@@ -1,7 +1,5 @@
 #!/usr/bin/env bash
 
-# tmux-resource-monitor launch script
-
 PLUGIN_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )/.." && pwd )"
 
 # Read tmux options with defaults
