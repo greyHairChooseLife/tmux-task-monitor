@@ -46,7 +46,7 @@ Have you ever wondered which instance of tsserver/rust-analyzer to kill to get h
 
 2. Add the plugin to your `~/.tmux.conf`:
    ```bash
-   set -g @plugin 'YlanAllouche/tmux-resource-monitor'
+   set -g @plugin 'YlanAllouche/tmux-task-monitor'
    ```
 
 3. Reload tmux and install plugins by pressing:
