@@ -148,23 +148,25 @@ class TmuxResourceMonitor:
 
     def get_tree_prefix(self, process, processes, index):
         """Generate tree prefix string for a process."""
-        if process["depth"] == 0:
-            return ""
-
         depth = process["depth"]
         prefix_parts = []
 
         # For each level from 0 to depth-1
         for level in range(depth):
-            if level == depth - 1:
-                # Current level - add connector
+            if level == 0 and depth == 1:
+                # Top-level process - simple connector
+                if process["is_last_child"]:
+                    prefix_parts.append("└──")
+                else:
+                    prefix_parts.append("├──")
+            elif level == depth - 1:
+                # Current level for nested process - connector
                 if process["is_last_child"]:
                     prefix_parts.append("└──")
                 else:
                     prefix_parts.append("├──")
             else:
-                # For ancestor levels, check if ancestor has siblings by looking ahead
-                # A sibling exists if there's another process at this level after the ancestor's subtree
+                # Ancestor level - check if ancestor has siblings by looking ahead
                 has_sibling = False
                 
                 # Find the ancestor at this level by walking back from current index
