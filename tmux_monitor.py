@@ -154,28 +154,45 @@ class TmuxResourceMonitor:
         depth = process["depth"]
         prefix_parts = []
 
-        # For each parent level (0 to depth-2), check if we need a vertical line
-        for level in range(depth - 1):
-            # Parent level - check if there are siblings after this branch
-            has_sibling_after = False
-            # Look ahead in the process list
-            for i in range(index + 1, len(processes)):
-                proc_depth = processes[i]["depth"]
-                if proc_depth < level:
-                    # We've gone back to a higher level, stop
-                    break
-                elif proc_depth == level:
-                    # Found a sibling at this level
-                    has_sibling_after = True
-                    break
-            
-            prefix_parts.append("│ " if has_sibling_after else "  ")
-
-        # Current level - add connector
-        if process["is_last_child"]:
-            prefix_parts.append("└─")
-        else:
-            prefix_parts.append("├─")
+        # For each level from 0 to depth-1
+        for level in range(depth):
+            if level == depth - 1:
+                # Current level - add connector
+                if process["is_last_child"]:
+                    prefix_parts.append("└──")
+                else:
+                    prefix_parts.append("├──")
+            else:
+                # For ancestor levels, check if ancestor has siblings by looking ahead
+                # A sibling exists if there's another process at this level after the ancestor's subtree
+                has_sibling = False
+                
+                # Find the ancestor at this level by walking back from current index
+                ancestor_at_level = -1
+                check_idx = index
+                while check_idx > 0 and processes[check_idx]["depth"] > level:
+                    check_idx -= 1
+                if check_idx >= 0 and processes[check_idx]["depth"] == level:
+                    ancestor_at_level = check_idx
+                
+                # Check if ancestor has a sibling (process at same depth not in ancestor's subtree)
+                if ancestor_at_level != -1:
+                    # Find where ancestor's subtree ends
+                    subtree_end = ancestor_at_level
+                    for i in range(ancestor_at_level + 1, len(processes)):
+                        if processes[i]["depth"] > level:
+                            subtree_end = i
+                        elif processes[i]["depth"] <= level:
+                            # Reached a process at same or lower level
+                            break
+                    
+                    # Check if there's a process at this level after the subtree
+                    for i in range(subtree_end + 1, len(processes)):
+                        if processes[i]["depth"] == level:
+                            has_sibling = True
+                            break
+                
+                prefix_parts.append("│   " if has_sibling else "    ")
 
         return "".join(prefix_parts)
 
@@ -357,25 +374,38 @@ class TmuxResourceMonitor:
         except subprocess.CalledProcessError:
             return []
 
-    def get_process_info(self, pid, depth=0, parent_last_child=None):
+    def get_process_info(self, pid, depth=0, parent_pid=None):
         """Get process info recursively with tree structure."""
         processes = []
         try:
-            parent = psutil.Process(pid)
+            proc = psutil.Process(pid)
             try:
                 cpu_percent = self.get_cpu_percent(pid)
-                memory_info = parent.memory_info()
+                memory_info = proc.memory_info()
                 rss_kb = memory_info.rss // 1024
-                cmdline_parts = parent.cmdline()
+                cmdline_parts = proc.cmdline()
                 if cmdline_parts:
                     executable = cmdline_parts[0].split("/")[-1]
                     args = cmdline_parts[1:] if len(cmdline_parts) > 1 else []
                     cmdline = executable + (" " + " ".join(args) if args else "")
                 else:
-                    cmdline = parent.name()
+                    cmdline = proc.name()
 
-                children = list(parent.children())
-                is_last_child = parent_last_child if parent_last_child is not None else False
+                # Get parent and siblings to determine is_last_child
+                is_last_child = False
+                if parent_pid is not None:
+                    try:
+                        parent = psutil.Process(parent_pid)
+                        children = list(parent.children())
+                        if children:
+                            last_child = children[-1]
+                            is_last_child = (last_child.pid == pid)
+                    except (psutil.NoSuchProcess, psutil.AccessDenied):
+                        pass
+
+                # Get this process's children
+                children = list(proc.children())
+                has_children = len(children) > 0
 
                 processes.append(
                     {
@@ -385,14 +415,14 @@ class TmuxResourceMonitor:
                         "command": cmdline,
                         "depth": depth,
                         "is_last_child": is_last_child,
-                        "has_children": len(children) > 0,
+                        "has_children": has_children,
+                        "parent_pid": parent_pid,
                     }
                 )
 
                 try:
                     for idx, child in enumerate(children):
-                        child_is_last = (idx == len(children) - 1)
-                        child_processes = self.get_process_info(child.pid, depth + 1, child_is_last)
+                        child_processes = self.get_process_info(child.pid, depth + 1, pid)
                         processes.extend(child_processes)
                 except (psutil.NoSuchProcess, psutil.AccessDenied):
                     pass
@@ -688,12 +718,22 @@ class TmuxResourceMonitor:
 
             tree_prefix = self.get_tree_prefix(process, window.processes, process_idx)
             mem_str = self.format_memory(process["memory_kb"])
-
-            fixed_width = 8 + 6 + 12 + 3 + len(tree_prefix)
-            max_cmd_len = width - fixed_width - 1
-
+ 
             command = process["command"]
             
+            # Build base line without tree (PID, CPU, MEM)
+            base_line = f"{process['pid']:>8} {process['cpu']:>6.1f} {mem_str:>12}"
+            base_line_len = len(base_line)
+            
+            # Tree starts right after base_line
+            tree_x = base_line_len
+            
+            # Command starts after tree prefix + 1 space
+            command_x = tree_x + len(tree_prefix) + 1
+            
+            # Calculate available space for command
+            max_cmd_len = width - command_x - 1
+ 
             if self.process_browsing_active and process_idx == self.selected_process_index:
                 if len(command) > max_cmd_len:
                     command = command[self.horizontal_scroll_offset:self.horizontal_scroll_offset + max_cmd_len]
@@ -706,41 +746,25 @@ class TmuxResourceMonitor:
             else:
                 if len(command) > max_cmd_len and max_cmd_len > 3:
                     command = command[: max_cmd_len - 3] + "..."
-
-            # Draw the line without tree_prefix to avoid overlap
-            base_line = f"{process['pid']:>8} {process['cpu']:>6.1f} {mem_str:>12}"
-
-            # Calculate where tree prefix and command will start
-            tree_x = len(base_line) + 1  # +1 for space after MEM
-            command_x = tree_x + len(tree_prefix) + 1  # +1 for space after tree prefix
-
-            # Build full line for length checking
-            full_line = base_line + " " + tree_prefix + " " + command
-            if len(full_line) > width - 1:
-                command = command[: width - len(full_line) - 4] + "..."
-
+ 
             is_selected = self.process_browsing_active and process_idx == self.selected_process_index
             
             try:
                 # Draw the base line (PID, CPU, MEM)
                 if is_selected:
-                    # Black on white for selected line
                     stdscr.addstr(y_pos, 0, base_line, curses.color_pair(8))
                 else:
-                    # Normal foreground color for non-selected lines
                     color = curses.color_pair(1) if process['cpu'] > 10 else curses.color_pair(0)
                     stdscr.addstr(y_pos, 0, base_line, color)
                 
-                # Draw tree prefix in cyan (with spaces)
+                # Draw tree prefix in cyan (no extra space before - starts at tree_x)
                 if tree_prefix:
-                    tree_str = " " + tree_prefix + " "
                     if is_selected:
-                        stdscr.addstr(y_pos, tree_x, tree_str, curses.color_pair(10) | curses.A_BOLD)
+                        stdscr.addstr(y_pos, tree_x, tree_prefix, curses.color_pair(10) | curses.A_BOLD)
                     else:
-                        stdscr.addstr(y_pos, tree_x, tree_str, curses.color_pair(9) | curses.A_BOLD)
-                    # command_x is already calculated correctly above
+                        stdscr.addstr(y_pos, tree_x, tree_prefix, curses.color_pair(9) | curses.A_BOLD)
                 
-                # Draw command
+                # Draw command at calculated position (tree_x + prefix length + 1 for space)
                 if is_selected:
                     stdscr.addstr(y_pos, command_x, command, curses.color_pair(8))
                 else:
@@ -1057,11 +1081,13 @@ class TmuxResourceMonitor:
                                 command = process['command']
                                 
                                 tree_prefix = self.get_tree_prefix(process, window.processes, self.selected_process_index)
-                                # Calculate: base_line + space + tree_prefix + space
-                                base_line_width = 8 + 1 + 6 + 1 + 12  # PID + space + CPU + space + MEM
-                                fixed_width = base_line_width + 1 + len(tree_prefix) + 1  # + spaces
+                                # Calculate actual base line length to get correct positioning
+                                base_line = f"{process['pid']:>8} {process['cpu']:>6.1f} {self.format_memory(process['memory_kb']):>12}"
+                                base_line_len = len(base_line)
+                                # Command starts after base_line + tree_prefix + 1 space
+                                command_start = base_line_len + len(tree_prefix) + 1
                                 height, width = stdscr.getmaxyx()
-                                max_cmd_len = width - fixed_width - 1
+                                max_cmd_len = width - command_start - 1
                                 
                                 if alt_key == curses.KEY_LEFT or alt_key == ord('h') or alt_key == ord('H'):
                                     self.horizontal_scroll_offset = max(0, self.horizontal_scroll_offset - 10)
