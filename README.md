@@ -2,12 +2,43 @@
 
 A tmux plugin for monitoring resource usage (CPU and memory) of the children processes of your tmux sessions grouped by window with an interactive curses-based interface.
 
-## Features
+
+## Problem
+
+You may have access to a full list of processes on `htop`, but how often do you have to look for the right instance of the server to restart?
+How often are you trying to understand which process belongs to what within the context of your project?
+Have you ever wondered which instance of tsserver/rust-analyzer to kill to get half your RAM back?
+
+- understand what spawns what (mcp, lsp)
+- find the project/branch relevant processes in a htop sea 
+- get the pid, send custom commands
+- troubleshoot a workspace by getting the command of a process
+- understanding resource usage on local machine in a meaninful way
+
+## Solution and features
 
 - 📊 Real-time resource monitoring (CPU and memory)
 - 🔄 Process tree visualization with parent/child relationships grouped by windows and filtered by current tmux session
 - 🖱️ Interactive process browsing for yanking PID or commands 
 - ⚡ Kill processes or send custom signals
+
+![screen1](./screen1.png)
+
+**With this plugin you can**
+- have a clear view of what resource/process are being used by the current tmux-session
+- easily kill specific processes (press `x`)
+- or send any signal with `s` followed by the SIGTERM your want to send
+- yank commands or PID for interactive troubleshooting with `y` and `Y` respectively
+- easily switch between windows with `h`/`l` or `←`/`→`
+- or horizontal scroll long process commands with `Alt+h`/`Alt+l` or `Alt+←`/`Alt+→` 
+
+![screen2](./screen2.png)
+
+**But you can also monitor your entire tmux session manager instance with the overview mode**:
+- list all of the tmux sessions and their resource usage
+- compare your your global tmux resource usage across sessions relative to the system resource usage
+- jump into a specific session's detail with `j`/`k` and `enter`
+
 
 ## Installation
 
@@ -38,7 +69,7 @@ set -g @tmux_resource_monitor_refresh_rate "2.0"
 # Popup width (default: 80%)
 set -g @tmux_resource_monitor_width "80%"
 
-# Popup height (default: 40%)
+# Popup height (default: 80%)
 set -g @tmux_resource_monitor_height "40%"
 ```
 
