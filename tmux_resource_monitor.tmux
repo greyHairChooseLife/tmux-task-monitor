@@ -19,3 +19,8 @@ lowercase_key=$(echo $monitor_key | tr '[:upper:]' '[:lower:]')
 if [ "$lowercase_key" != "none" ]; then
 	tmux bind-key "${monitor_key}" run-shell -t "#{pane_id}" "$monitor_script"
 fi
+
+overview_key="T"
+overview_script="$script_dir/scripts/launch_overview.sh"
+
+tmux bind-key "${overview_key}" run-shell -t "#{pane_id}" "$overview_script"

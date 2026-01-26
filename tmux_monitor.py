@@ -17,6 +17,15 @@ import psutil
 
 
 @dataclass
+class SessionStats:
+    name: str
+    cpu_total: float
+    ram_total: int
+    process_count: int
+    window_count: int
+
+
+@dataclass
 class WindowStats:
     name: str
     index: int
@@ -44,6 +53,17 @@ class TmuxResourceMonitor:
         self.horizontal_scroll_offset = 0
         self.input_mode = None
         self.input_buffer = ""
+        self.show_overview = False
+        self.browse_sessions = False
+        self.selected_session_index = 0
+        self.sessions_data = []
+        self.sessions_data = []
+        self.system_cpu_percent = 0.0
+        self.system_memory_percent = 0.0
+        self.system_memory_mb = 0
+        self.tmux_cpu_percent = 0.0
+        self.tmux_memory_mb = 0
+        self.tmux_memory_percent = 0.0
 
     def init_colors(self):
         """Initialize color pairs for curses."""
@@ -81,6 +101,121 @@ class TmuxResourceMonitor:
             return result.stdout.strip().split("\n") if result.stdout.strip() else []
         except subprocess.CalledProcessError:
             return []
+
+    def get_session_window_count(self, session_name):
+        """Get the number of windows in a session."""
+        try:
+            result = subprocess.run(
+                ["tmux", "list-windows", "-t", session_name, "-F", "#{window_index}"],
+                capture_output=True,
+                text=True,
+                check=True,
+            )
+            windows = result.stdout.strip().split("\n") if result.stdout.strip() else []
+            return len([w for w in windows if w])
+        except subprocess.CalledProcessError:
+            return 0
+
+    def get_session_pane_pids(self, session_name):
+        """Get all pane PIDs for a session."""
+        pids = []
+        try:
+            windows_result = subprocess.run(
+                ["tmux", "list-windows", "-t", session_name, "-F", "#{window_index}"],
+                capture_output=True,
+                text=True,
+                check=True,
+            )
+            for window_idx in windows_result.stdout.strip().split("\n"):
+                if not window_idx:
+                    continue
+                try:
+                    panes_result = subprocess.run(
+                        ["tmux", "list-panes", "-t", f"{session_name}:{window_idx}", "-F", "#{pane_pid}"],
+                        capture_output=True,
+                        text=True,
+                        check=True,
+                    )
+                    for pid_str in panes_result.stdout.strip().split("\n"):
+                        if pid_str.strip():
+                            try:
+                                pids.append(int(pid_str.strip()))
+                            except ValueError:
+                                continue
+                except subprocess.CalledProcessError:
+                    continue
+        except subprocess.CalledProcessError:
+            pass
+        return pids
+
+    def collect_all_sessions_stats(self):
+        """Collect stats for all tmux sessions."""
+        sessions = self.get_tmux_sessions()
+        self.sessions_data = []
+
+        for session_name in sessions:
+            try:
+                pane_pids = self.get_session_pane_pids(session_name)
+                window_count = self.get_session_window_count(session_name)
+
+                session_cpu = 0.0
+                session_ram = 0
+                session_process_count = 0
+
+                for pid in pane_pids:
+                    try:
+                        proc = psutil.Process(pid)
+                        session_cpu += proc.cpu_percent()
+                        session_ram += proc.memory_info().rss // 1024
+                        session_process_count += 1
+                        for child in proc.children(recursive=True):
+                            try:
+                                session_cpu += child.cpu_percent()
+                                session_ram += child.memory_info().rss // 1024
+                                session_process_count += 1
+                            except (psutil.NoSuchProcess, psutil.AccessDenied):
+                                continue
+                    except (psutil.NoSuchProcess, psutil.AccessDenied):
+                        continue
+
+                self.sessions_data.append(SessionStats(
+                    name=session_name,
+                    cpu_total=session_cpu,
+                    ram_total=session_ram,
+                    process_count=session_process_count,
+                    window_count=window_count
+                ))
+            except Exception:
+                continue
+
+        self.sessions_data.sort(key=lambda x: x.cpu_total, reverse=True)
+
+    def collect_system_stats(self):
+        """Collect system-wide resource usage."""
+        try:
+            self.system_cpu_percent = psutil.cpu_percent(interval=None)
+            mem = psutil.virtual_memory()
+            self.system_memory_percent = mem.percent
+            self.system_memory_mb = mem.used // (1024 * 1024)
+        except Exception:
+            self.system_cpu_percent = 0.0
+            self.system_memory_percent = 0.0
+            self.system_memory_mb = 0
+
+        self.collect_all_sessions_stats()
+
+        total_tmux_cpu = 0.0
+        total_tmux_ram = 0
+        for session in self.sessions_data:
+            total_tmux_cpu += session.cpu_total
+            total_tmux_ram += session.ram_total
+
+        self.tmux_cpu_percent = total_tmux_cpu
+        self.tmux_memory_mb = total_tmux_ram // 1024
+        self.tmux_memory_percent = (
+            (total_tmux_ram * 100) / (self.total_ram_mb * 1024)
+            if self.total_ram_mb > 0 else 0
+        )
 
     def get_tmux_windows(self):
         """Get windows for the specified session."""
@@ -574,7 +709,103 @@ class TmuxResourceMonitor:
                     pass
 
         stdscr.refresh()
-    
+
+    def draw_overview(self, stdscr, height, width):
+        """Draw the overview screen with system stats and session table."""
+        y_pos = 0
+
+        title = "System Resource Overview"
+        x_pos = max(0, (width - len(title)) // 2)
+        stdscr.addstr(y_pos, x_pos, title, curses.color_pair(3) | curses.A_BOLD)
+        if self.browse_sessions:
+            stdscr.addstr(y_pos, x_pos + len(title) + 1, "[BROWSE]", curses.color_pair(8) | curses.A_REVERSE)
+        y_pos += 2
+
+        sys_cpu_str = f"System CPU: {self.system_cpu_percent:.1f}%"
+        sys_mem_str = f"System MEM: {self.system_memory_mb} MB ({self.system_memory_percent:.1f}%)"
+
+        stdscr.addstr(y_pos, 0, sys_cpu_str, curses.color_pair(2) | curses.A_BOLD)
+        stdscr.addstr(y_pos, 25, sys_mem_str, curses.color_pair(2) | curses.A_BOLD)
+        y_pos += 1
+
+        tmux_cpu_str = f"Tmux CPU: {self.tmux_cpu_percent:.1f}%"
+        tmux_mem_str = f"Tmux MEM: {self.tmux_memory_mb} MB ({self.tmux_memory_percent:.1f}%)"
+
+        stdscr.addstr(y_pos, 0, tmux_cpu_str, curses.color_pair(4) | curses.A_BOLD)
+        stdscr.addstr(y_pos, 25, tmux_mem_str, curses.color_pair(4) | curses.A_BOLD)
+        y_pos += 2
+
+        separator = "-" * (width - 1)
+        stdscr.addstr(y_pos, 0, separator, curses.color_pair(5))
+        y_pos += 1
+
+        header = f"{'Session':<20} {'CPU%':>8} {'MEM':>12} {'Procs':>7} {'Wins':>6}"
+        stdscr.addstr(y_pos, 0, header, curses.color_pair(3) | curses.A_BOLD)
+        y_pos += 1
+
+        separator = "-" * (width - 1)
+        stdscr.addstr(y_pos, 0, separator, curses.color_pair(5))
+        y_pos += 1
+
+        if not self.sessions_data:
+            no_sessions = "No tmux sessions found"
+            x_pos = max(0, (width - len(no_sessions)) // 2)
+            stdscr.addstr(y_pos + 1, x_pos, no_sessions, curses.color_pair(2))
+            return
+
+        if self.browse_sessions:
+            if self.selected_session_index >= len(self.sessions_data):
+                self.selected_session_index = len(self.sessions_data) - 1
+            if self.selected_session_index < 0:
+                self.selected_session_index = 0
+
+        available_lines = height - y_pos - 2
+        first_displayed = 0
+        if self.browse_sessions and self.sessions_data:
+            if self.selected_session_index >= available_lines:
+                first_displayed = self.selected_session_index - available_lines + 1
+
+        for idx, session in enumerate(self.sessions_data):
+            line_idx = idx - first_displayed
+            if line_idx < 0:
+                continue
+            if line_idx >= available_lines:
+                break
+
+            current_y = y_pos + line_idx
+
+            ram_mb = session.ram_total // 1024
+            ram_percent = (session.ram_total * 100) / (self.total_ram_mb * 1024) if self.total_ram_mb > 0 else 0
+
+            is_selected = self.browse_sessions and idx == self.selected_session_index
+
+            prefix = "» " if is_selected else "  "
+            row = f"{prefix}{session.name[:18]:<20} {session.cpu_total:>7.1f}% {ram_mb:>6d}MB({ram_percent:>4.1f}%) {session.process_count:>7} {session.window_count:>6}"
+
+            if is_selected:
+                color = curses.color_pair(2) | curses.A_REVERSE | curses.A_BOLD
+            elif session.cpu_total > 20 or ram_percent > 10:
+                color = curses.color_pair(4)
+            else:
+                color = curses.color_pair(1) if idx % 2 == 0 else curses.color_pair(0)
+
+            try:
+                stdscr.addstr(current_y, 0, row[:width-1], color)
+            except curses.error:
+                pass
+
+        totals_cpu = self.tmux_cpu_percent
+        totals_ram_mb = self.tmux_memory_mb
+        totals_procs = sum(s.process_count for s in self.sessions_data)
+        totals_wins = sum(s.window_count for s in self.sessions_data)
+
+        totals_line = f"{'TOTAL':<20} {totals_cpu:>7.1f}% {totals_ram_mb:>6d}MB({self.tmux_memory_percent:>4.1f}%) {totals_procs:>7} {totals_wins:>6}"
+        totals_y = height - 3
+        try:
+            stdscr.addstr(totals_y, 0, totals_line, curses.color_pair(1) | curses.A_BOLD)
+        except curses.error:
+            pass
+
     def draw_input_prompt(self, stdscr, height, width):
         """Draw input prompt for signal number."""
         if not self.windows_data:
@@ -792,6 +1023,66 @@ class TmuxResourceMonitor:
                         self.input_buffer = ""
                 elif key == 3:  # Ctrl+C
                     self.running = False
+                elif key == 10 or key == 13:  # Enter
+                    if self.show_overview and self.browse_sessions and self.sessions_data:
+                        if self.selected_session_index < len(self.sessions_data):
+                            selected = self.sessions_data[self.selected_session_index]
+                            self.show_overview = False
+                            self.browse_sessions = False
+                            self.session_name = selected.name
+                            self.current_tab = 0
+                            self.collect_window_data()
+                elif key == 27:  # ESC
+                    if self.show_overview:
+                        self.show_overview = False
+                        self.browse_sessions = False
+                elif key == ord("j") or key == curses.KEY_DOWN:
+                    if self.show_overview:
+                        self.browse_sessions = True
+                        if not self.sessions_data:
+                            pass
+                        elif self.selected_session_index < len(self.sessions_data) - 1:
+                            self.selected_session_index += 1
+                        else:
+                            self.selected_session_index = 0
+                    elif self.windows_data and self.windows_data[self.current_tab].processes:
+                        self.process_browsing_active = True
+                        window = self.windows_data[self.current_tab]
+                        if self.selected_process_index < len(window.processes) - 1:
+                            self.selected_process_index += 1
+                        else:
+                            self.selected_process_index = 0
+                elif key == ord("k") or key == curses.KEY_UP:
+                    if self.show_overview:
+                        self.browse_sessions = True
+                        if self.selected_session_index > 0:
+                            self.selected_session_index -= 1
+                        elif self.sessions_data:
+                            self.selected_session_index = len(self.sessions_data) - 1
+                    elif self.process_browsing_active and self.selected_process_index > 0:
+                        self.selected_process_index -= 1
+                    elif self.process_browsing_active and self.windows_data:
+                        window = self.windows_data[self.current_tab]
+                        if window.processes:
+                            self.selected_process_index = len(window.processes) - 1
+                elif key == curses.KEY_LEFT or key == ord("h") or key == ord("H"):
+                    if self.show_overview and self.browse_sessions and self.sessions_data and self.selected_session_index > 0:
+                        self.selected_session_index -= 1
+                    elif self.show_overview:
+                        self.browse_sessions = True
+                        if self.sessions_data:
+                            self.selected_session_index = len(self.sessions_data) - 1
+                    else:
+                        self.prev_tab()
+                elif key == curses.KEY_RIGHT or key == ord("l") or key == ord("L"):
+                    if self.show_overview and self.browse_sessions and self.sessions_data and self.selected_session_index < len(self.sessions_data) - 1:
+                        self.selected_session_index += 1
+                    elif self.show_overview:
+                        self.browse_sessions = True
+                        if self.sessions_data:
+                            self.selected_session_index = 0
+                    else:
+                        self.next_tab()
         except curses.error:
             pass
 
@@ -800,6 +1091,71 @@ class TmuxResourceMonitor:
         self.stdscr = stdscr
         curses.curs_set(0)  # Hide cursor
         self.init_colors()
+
+        if self.show_overview:
+            stdscr.clear()
+            height, width = stdscr.getmaxyx()
+            loading_msg = "Loading system and tmux session data..."
+            stdscr.addstr(
+                height // 2,
+                (width - len(loading_msg)) // 2,
+                loading_msg,
+                curses.color_pair(3) | curses.A_BOLD,
+            )
+            stdscr.refresh()
+
+            for proc in psutil.process_iter(["pid"]):
+                try:
+                    proc.cpu_percent()
+                except (psutil.NoSuchProcess, psutil.AccessDenied):
+                    pass
+
+            self.collect_system_stats()
+
+            time.sleep(0.05)
+
+            last_refresh = time.time()
+            last_draw = 0
+
+            while self.running:
+                try:
+                    current_time = time.time()
+
+                    self.handle_input(stdscr)
+
+                    if not self.input_mode and current_time - last_refresh >= self.refresh_rate:
+                        self.collect_system_stats()
+                        last_refresh = current_time
+
+                    redraw_interval = 0.05 if current_time - last_refresh < 2 else 0.1
+                    if current_time - last_draw >= redraw_interval:
+                        try:
+                            height, width = stdscr.getmaxyx()
+
+                            stdscr.erase()
+
+                            self.draw_overview(stdscr, height, width)
+
+                            if not self.input_mode:
+                                curses.curs_set(0)
+                                footer = "Press 'q' to quit, 'j/k' or up/down to browse, Enter to select session"
+                                if width > len(footer):
+                                    stdscr.addstr(height - 1, 0, footer, curses.color_pair(5))
+                                else:
+                                    stdscr.addstr(height - 1, 0, "q=quit j/k=browse Enter=select", curses.color_pair(5))
+
+                            stdscr.refresh()
+                            last_draw = current_time
+
+                        except curses.error:
+                            time.sleep(0.1)
+                            continue
+
+                    time.sleep(0.05)
+
+                except KeyboardInterrupt:
+                    break
+            return
 
         sessions = self.get_tmux_sessions()
         if self.session_name not in sessions:
@@ -845,7 +1201,9 @@ class TmuxResourceMonitor:
 
                 self.handle_input(stdscr)
 
-                # Only refresh data if not in input mode
+                if self.show_overview:
+                    continue
+
                 if not self.input_mode and current_time - last_refresh >= self.refresh_rate:
                     self.collect_window_data()
                     last_refresh = current_time
@@ -857,29 +1215,25 @@ class TmuxResourceMonitor:
 
                         stdscr.erase()
 
-                        # Draw interface
                         y_pos = self.draw_header(stdscr, height, width)
                         y_pos = self.draw_tabs(stdscr, y_pos, height, width)
                         self.draw_window_details(stdscr, y_pos, height, width)
                         
-                        # Draw input prompt if in signal input mode
                         if self.input_mode == 'signal':
-                            curses.curs_set(1)  # Show cursor
+                            curses.curs_set(1)
                             self.draw_input_prompt(stdscr, height, width)
                         else:
-                            curses.curs_set(0)  # Hide cursor
+                            curses.curs_set(0)
                             self.draw_footer(stdscr, height, width)
 
-                        # Refresh screen?
                         stdscr.refresh()
                         last_draw = current_time
 
                     except curses.error:
-                        # Terminal might be resizing?
                         time.sleep(0.1)
                         continue
 
-                time.sleep(0.05)  # Responsive interface
+                time.sleep(0.05)
 
             except KeyboardInterrupt:
                 break
@@ -944,7 +1298,7 @@ Features:
         """
     )
 
-    parser.add_argument("session_name", help="Name of the tmux session to monitor", default=None)
+    parser.add_argument("session_name", help="Name of the tmux session to monitor", default=None, nargs="?")
 
     parser.add_argument(
         "-w",
@@ -975,6 +1329,12 @@ Features:
         help="List available tmux sessions and exit",
     )
 
+    parser.add_argument(
+        "--overview",
+        action="store_true",
+        help="Show system-wide overview of all tmux sessions",
+    )
+
     args = parser.parse_args()
 
     if args.list_sessions:
@@ -998,20 +1358,6 @@ Features:
             print("Error: Could not list tmux sessions. Is tmux running?")
         return
 
-    # Determine session name (CLI arg or tmux option)
-    session_name = args.session_name
-    if not session_name:
-        # Try to read from tmux environment if available
-        session_name = os.environ.get('TMUX_SESSION_NAME', None)
-
-    # Determine window filter (CLI arg or tmux option)
-    window_filter = args.window_filter
-    if not window_filter:
-        window_filter = read_tmux_option('tmux_resource_monitor_window_filter')
-        if not window_filter:
-            window_filter = None
-
-    # Determine refresh rate (CLI arg or tmux option)
     refresh_rate = args.refresh_rate
     if refresh_rate is None:
         refresh_rate_str = read_tmux_option('tmux_resource_monitor_refresh_rate')
@@ -1025,6 +1371,26 @@ Features:
     if refresh_rate <= 0:
         print("Error: Refresh rate must be positive")
         sys.exit(1)
+
+    show_overview = args.overview
+
+    if show_overview:
+        monitor = TmuxResourceMonitor(
+            session_name=None, window_filter=None, refresh_rate=refresh_rate
+        )
+        monitor.show_overview = True
+        monitor.run()
+        return
+
+    session_name = args.session_name
+    if not session_name:
+        session_name = os.environ.get('TMUX_SESSION_NAME', None)
+
+    window_filter = args.window_filter
+    if not window_filter:
+        window_filter = read_tmux_option('tmux_resource_monitor_window_filter')
+        if not window_filter:
+            window_filter = None
 
     monitor = TmuxResourceMonitor(
         session_name, window_filter, refresh_rate
