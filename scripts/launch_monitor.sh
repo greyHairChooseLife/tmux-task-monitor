@@ -17,11 +17,11 @@ WINDOW_NAME=$(tmux display-message -p '#{window_name}')
 CWD=$(tmux display-message -p '#{pane_current_path}')
 
 # Build command arguments
-ARGS="\"$SESSION_NAME\""
+ARGS="$SESSION_NAME"
 if [ -n "$WINDOW_FILTER" ]; then
-    ARGS="$ARGS -w \"$WINDOW_NAME\""
+    ARGS="$ARGS -w $WINDOW_NAME"
 fi
 ARGS="$ARGS -r $REFRESH_RATE"
 
 # Launch Python monitor
-tmux display-popup -E -w "$WIDTH" -h "$HEIGHT" -d "$CWD" "$PLUGIN_DIR/tmux_monitor.py $ARGS"
+tmux display-popup -E -w "$WIDTH" -h "$HEIGHT" -d "$CWD" python3 "$PLUGIN_DIR/tmux_monitor.py" $ARGS
