@@ -134,8 +134,9 @@ class TmuxResourceMonitor:
             curses.init_pair(5, curses.COLOR_BLUE, -1)  # Blue text
             curses.init_pair(6, curses.COLOR_MAGENTA, -1)  # Magenta text
             curses.init_pair(7, curses.COLOR_WHITE, curses.COLOR_BLUE)  # White on blue
-            curses.init_pair(8, curses.COLOR_WHITE, curses.COLOR_RED)  # White on red for selected process
-            curses.init_pair(9, curses.COLOR_GREEN, -1)  # Tree symbols in green
+            curses.init_pair(8, curses.COLOR_BLACK, curses.COLOR_WHITE)  # Black on white for selected process
+            curses.init_pair(9, curses.COLOR_CYAN, -1)  # Tree symbols in cyan (normal)
+            curses.init_pair(10, curses.COLOR_CYAN, curses.COLOR_WHITE)  # Cyan on white for selected tree symbols
 
             self.colors_initialized = True
 
@@ -153,19 +154,24 @@ class TmuxResourceMonitor:
         depth = process["depth"]
         prefix_parts = []
 
+        # For each parent level (0 to depth-2), check if we need a vertical line
         for level in range(depth - 1):
-            # Check if there's a process at this level with a sibling below
-            has_sibling_below = False
+            # Parent level - check if there are siblings after this branch
+            has_sibling_after = False
+            # Look ahead in the process list
             for i in range(index + 1, len(processes)):
-                if processes[i]["depth"] == level:
-                    has_sibling_below = True
+                proc_depth = processes[i]["depth"]
+                if proc_depth < level:
+                    # We've gone back to a higher level, stop
                     break
-                elif processes[i]["depth"] < level:
+                elif proc_depth == level:
+                    # Found a sibling at this level
+                    has_sibling_after = True
                     break
-            prefix_parts.append("│" if has_sibling_below else " ")
-            prefix_parts.append("  ")
+            
+            prefix_parts.append("│ " if has_sibling_after else "  ")
 
-        # Current level
+        # Current level - add connector
         if process["is_last_child"]:
             prefix_parts.append("└─")
         else:
@@ -701,28 +707,46 @@ class TmuxResourceMonitor:
                 if len(command) > max_cmd_len and max_cmd_len > 3:
                     command = command[: max_cmd_len - 3] + "..."
 
-            line = f"{process['pid']:>8} {process['cpu']:>6.1f} {mem_str:>12} {tree_prefix} {command}"
+            # Draw the line without tree_prefix to avoid overlap
+            base_line = f"{process['pid']:>8} {process['cpu']:>6.1f} {mem_str:>12}"
 
-            if len(line) > width - 1:
-                line = line[: width - 4] + "..."
+            # Calculate where tree prefix and command will start
+            tree_x = len(base_line) + 1  # +1 for space after MEM
+            command_x = tree_x + len(tree_prefix) + 1  # +1 for space after tree prefix
+
+            # Build full line for length checking
+            full_line = base_line + " " + tree_prefix + " " + command
+            if len(full_line) > width - 1:
+                command = command[: width - len(full_line) - 4] + "..."
 
             is_selected = self.process_browsing_active and process_idx == self.selected_process_index
-            color = curses.color_pair(1) if process['cpu'] > 10 else curses.color_pair(0)
-            
-            if is_selected:
-                color = color | curses.A_REVERSE
             
             try:
-                # Draw the base line
-                stdscr.addstr(y_pos, 0, line, color)
+                # Draw the base line (PID, CPU, MEM)
+                if is_selected:
+                    # Black on white for selected line
+                    stdscr.addstr(y_pos, 0, base_line, curses.color_pair(8))
+                else:
+                    # Normal foreground color for non-selected lines
+                    color = curses.color_pair(1) if process['cpu'] > 10 else curses.color_pair(0)
+                    stdscr.addstr(y_pos, 0, base_line, color)
                 
-                # Draw tree prefix in different color
+                # Draw tree prefix in cyan (with spaces)
                 if tree_prefix:
-                    x_pos = 8 + 6 + 12 + 3  # PID + CPU + MEM + spaces
-                    tree_color = curses.color_pair(9)
+                    tree_str = " " + tree_prefix + " "
                     if is_selected:
-                        tree_color = tree_color | curses.A_REVERSE
-                    stdscr.addstr(y_pos, x_pos, tree_prefix, tree_color)
+                        stdscr.addstr(y_pos, tree_x, tree_str, curses.color_pair(10) | curses.A_BOLD)
+                    else:
+                        stdscr.addstr(y_pos, tree_x, tree_str, curses.color_pair(9) | curses.A_BOLD)
+                    # command_x is already calculated correctly above
+                
+                # Draw command
+                if is_selected:
+                    stdscr.addstr(y_pos, command_x, command, curses.color_pair(8))
+                else:
+                    color = curses.color_pair(1) if process['cpu'] > 10 else curses.color_pair(0)
+                    stdscr.addstr(y_pos, command_x, command, color)
+                    
             except curses.error:
                 break
             y_pos += 1
@@ -1033,7 +1057,9 @@ class TmuxResourceMonitor:
                                 command = process['command']
                                 
                                 tree_prefix = self.get_tree_prefix(process, window.processes, self.selected_process_index)
-                                fixed_width = 8 + 6 + 12 + 3 + len(tree_prefix) + 1
+                                # Calculate: base_line + space + tree_prefix + space
+                                base_line_width = 8 + 1 + 6 + 1 + 12  # PID + space + CPU + space + MEM
+                                fixed_width = base_line_width + 1 + len(tree_prefix) + 1  # + spaces
                                 height, width = stdscr.getmaxyx()
                                 max_cmd_len = width - fixed_width - 1
                                 
