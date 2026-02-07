@@ -3,12 +3,16 @@
 tmux-resource-monitor-curses.py - Lightweight and simple tmux resource monitor using ncurses
 """
 
+
+
+
 import argparse
 import curses
 import os
 import signal
 import subprocess
 import sys
+import threading
 import time
 from dataclasses import dataclass
 from typing import List
@@ -57,7 +61,6 @@ class TmuxResourceMonitor:
         self.browse_sessions = False
         self.selected_session_index = 0
         self.sessions_data = []
-        self.sessions_data = []
         self.system_cpu_percent = 0.0
         self.system_memory_percent = 0.0
         self.system_memory_mb = 0
@@ -67,10 +70,10 @@ class TmuxResourceMonitor:
         self.cpu_needs_warmup = True
         self.cpu_warmup_done = False
         self.last_cpu_measurements = {}  # pid -> (timestamp, cpu_times)
+        self.pane_pid_cache = {}  # Cache for pane PIDs: key -> (timestamp, pids)
 
     def warmup_cpu_async(self):
         """Start async CPU warmup in background to establish baseline."""
-        import threading
         def do_warmup():
             time.sleep(0.1)
             for window in self.windows_data:
@@ -91,6 +94,20 @@ class TmuxResourceMonitor:
             self.cpu_warmup_done = True
         thread = threading.Thread(target=do_warmup, daemon=True)
         thread.start()
+
+    def _get_cached_pane_pids(self, window_index):
+        """Get pane PIDs with caching to reduce subprocess calls."""
+        current_time = time.time()
+        cache_key = f"{self.session_name}:{window_index}"
+
+        if cache_key in self.pane_pid_cache:
+            cached_time, cached_pids = self.pane_pid_cache[cache_key]
+            if current_time - cached_time < 0.5:
+                return cached_pids
+
+        pids = self.get_pane_pids(window_index)
+        self.pane_pid_cache[cache_key] = (current_time, pids)
+        return pids
 
     def get_cpu_percent(self, pid, update_baseline=False):
         """Get CPU percent using cpu_times() for accurate measurements."""
@@ -476,7 +493,7 @@ class TmuxResourceMonitor:
         self.windows_data = []
 
         for window_index, window_name in windows:
-            pane_pids = self.get_pane_pids(window_index)
+            pane_pids = self._get_cached_pane_pids(window_index)
 
             if not pane_pids:
                 window_stats = WindowStats(
@@ -1280,7 +1297,6 @@ class TmuxResourceMonitor:
             time.sleep(0.05)
 
             last_refresh = time.time()
-            last_draw = 0
 
             while self.running:
                 try:
@@ -1288,35 +1304,31 @@ class TmuxResourceMonitor:
 
                     self.handle_input(stdscr)
 
+                    # Prioritize rendering
+                    try:
+                        height, width = stdscr.getmaxyx()
+                        stdscr.erase()
+
+                        self.draw_overview(stdscr, height, width)
+
+                        if not self.input_mode:
+                            curses.curs_set(0)
+                        footer = "Press 'q' to quit, 'j/k' or up/down to browse, Enter to select session"
+                        if width > len(footer):
+                            stdscr.addstr(height - 1, 0, footer, curses.color_pair(5))
+                        else:
+                            stdscr.addstr(height - 1, 0, "q=quit j/k=browse Enter=select", curses.color_pair(5))
+
+                        stdscr.refresh()
+                    except curses.error:
+                        pass
+
+                    # Collect data if needed
                     if not self.input_mode and current_time - last_refresh >= self.refresh_rate:
                         self.collect_system_stats()
                         last_refresh = current_time
 
-                    redraw_interval = 0.05 if current_time - last_refresh < 2 else 0.1
-                    if current_time - last_draw >= redraw_interval:
-                        try:
-                            height, width = stdscr.getmaxyx()
-
-                            stdscr.erase()
-
-                            self.draw_overview(stdscr, height, width)
-
-                            if not self.input_mode:
-                                curses.curs_set(0)
-                                footer = "Press 'q' to quit, 'j/k' or up/down to browse, Enter to select session"
-                                if width > len(footer):
-                                    stdscr.addstr(height - 1, 0, footer, curses.color_pair(5))
-                                else:
-                                    stdscr.addstr(height - 1, 0, "q=quit j/k=browse Enter=select", curses.color_pair(5))
-
-                            stdscr.refresh()
-                            last_draw = current_time
-
-                        except curses.error:
-                            time.sleep(0.1)
-                            continue
-
-                    time.sleep(0.05)
+                    time.sleep(0.033)
 
                 except KeyboardInterrupt:
                     break
@@ -1351,9 +1363,7 @@ class TmuxResourceMonitor:
         self.warmup_cpu_async()  # Background - re-samples after 100ms to update baselines
         time.sleep(0.15)  # Wait for warmup to complete
 
-        last_refresh = 0  # Force initial collection on first loop iteration
-
-        last_draw = 0
+        last_refresh = 0
 
         while self.running:
             try:
@@ -1364,36 +1374,33 @@ class TmuxResourceMonitor:
                 if self.show_overview:
                     continue
 
+                # Prioritize rendering - always render first
+                try:
+                    height, width = stdscr.getmaxyx()
+                    stdscr.erase()
+
+                    y_pos = self.draw_header(stdscr, height, width)
+                    y_pos = self.draw_tabs(stdscr, y_pos, height, width)
+                    self.draw_window_details(stdscr, y_pos, height, width)
+
+                    if self.input_mode == 'signal':
+                        curses.curs_set(1)
+                        self.draw_input_prompt(stdscr, height, width)
+                    else:
+                        curses.curs_set(0)
+                        self.draw_footer(stdscr, height, width)
+
+                    stdscr.refresh()
+                except curses.error:
+                    pass
+
+                # Then collect data if needed (don't block rendering)
                 if not self.input_mode and current_time - last_refresh >= self.refresh_rate:
                     self.collect_window_data()
                     last_refresh = current_time
 
-                redraw_interval = 0.05 if current_time - last_refresh < 2 else 0.1
-                if current_time - last_draw >= redraw_interval:
-                    try:
-                        height, width = stdscr.getmaxyx()
-
-                        stdscr.erase()
-
-                        y_pos = self.draw_header(stdscr, height, width)
-                        y_pos = self.draw_tabs(stdscr, y_pos, height, width)
-                        self.draw_window_details(stdscr, y_pos, height, width)
-                        
-                        if self.input_mode == 'signal':
-                            curses.curs_set(1)
-                            self.draw_input_prompt(stdscr, height, width)
-                        else:
-                            curses.curs_set(0)
-                            self.draw_footer(stdscr, height, width)
-
-                        stdscr.refresh()
-                        last_draw = current_time
-
-                    except curses.error:
-                        time.sleep(0.1)
-                        continue
-
-                time.sleep(0.05)
+                # Minimal sleep to prevent CPU spin
+                time.sleep(0.033)  # ~30fps
 
             except KeyboardInterrupt:
                 break
@@ -1441,21 +1448,21 @@ Examples:
   %(prog)s blog -r 1.0             # Refresh every 1 second
   %(prog)s blog -w editor -r 0.5   # Start on 'editor' window, refresh every 0.5s
 
-Note: When used as a tmux plugin, options can also be set via .tmux.conf:
-  set -g @tmux_resource_monitor_refresh_rate "2.0"
-  set -g @tmux_resource_monitor_width "80%"
-  set -g @tmux_resource_monitor_height "40%"
+ Note: When used as a tmux plugin, options can also be set via .tmux.conf:
+   set -g @tmux_resource_monitor_refresh_rate "2.0"
+   set -g @tmux_resource_monitor_width "80%%"
+   set -g @tmux_resource_monitor_height "40%%"
 
 Press '?' in the monitor for keyboard controls.
 
-Features:
-  • Session summary with total resource usage
-  • Interactive window navigation
-  • Process tree visualization for selected window
-  • Real-time updates
-  • Lightweight curses-based interface
-  • Works standalone or as tmux plugin
-        """
+ Features:
+   - Session summary with total resource usage
+   - Interactive window navigation
+   - Process tree visualization for selected window
+   - Real-time updates
+   - Lightweight curses-based interface
+   - Works standalone or as tmux plugin
+         """
     )
 
     parser.add_argument("session_name", help="Name of the tmux session to monitor", default=None, nargs="?")
