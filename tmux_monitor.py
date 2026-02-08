@@ -3,9 +3,6 @@
 tmux-resource-monitor-curses.py - Lightweight and simple tmux resource monitor using ncurses
 """
 
-
-
-
 import argparse
 import curses
 import os
@@ -74,6 +71,7 @@ class TmuxResourceMonitor:
 
     def warmup_cpu_async(self):
         """Start async CPU warmup in background to establish baseline."""
+
         def do_warmup():
             time.sleep(0.1)
             for window in self.windows_data:
@@ -85,13 +83,17 @@ class TmuxResourceMonitor:
                         for child in proc.children(recursive=True):
                             try:
                                 child_times = child.cpu_times()
-                                self.last_cpu_measurements[child.pid] = (time.time(), child_times)
+                                self.last_cpu_measurements[child.pid] = (
+                                    time.time(),
+                                    child_times,
+                                )
                             except (psutil.NoSuchProcess, psutil.AccessDenied):
                                 pass
                     except (psutil.NoSuchProcess, psutil.AccessDenied):
                         if pid in self.last_cpu_measurements:
                             del self.last_cpu_measurements[pid]
             self.cpu_warmup_done = True
+
         thread = threading.Thread(target=do_warmup, daemon=True)
         thread.start()
 
@@ -151,9 +153,13 @@ class TmuxResourceMonitor:
             curses.init_pair(5, curses.COLOR_BLUE, -1)  # Blue text
             curses.init_pair(6, curses.COLOR_MAGENTA, -1)  # Magenta text
             curses.init_pair(7, curses.COLOR_WHITE, curses.COLOR_BLUE)  # White on blue
-            curses.init_pair(8, curses.COLOR_BLACK, curses.COLOR_WHITE)  # Black on white for selected process
+            curses.init_pair(
+                8, curses.COLOR_BLACK, curses.COLOR_WHITE
+            )  # Black on white for selected process
             curses.init_pair(9, curses.COLOR_CYAN, -1)  # Tree symbols in cyan (normal)
-            curses.init_pair(10, curses.COLOR_CYAN, curses.COLOR_WHITE)  # Cyan on white for selected tree symbols
+            curses.init_pair(
+                10, curses.COLOR_CYAN, curses.COLOR_WHITE
+            )  # Cyan on white for selected tree symbols
 
             self.colors_initialized = True
 
@@ -185,7 +191,7 @@ class TmuxResourceMonitor:
             else:
                 # Ancestor level - check if ancestor has siblings by looking ahead
                 has_sibling = False
-                
+
                 # Find the ancestor at this level by walking back from current index
                 ancestor_at_level = -1
                 check_idx = index
@@ -193,7 +199,7 @@ class TmuxResourceMonitor:
                     check_idx -= 1
                 if check_idx >= 0 and processes[check_idx]["depth"] == level:
                     ancestor_at_level = check_idx
-                
+
                 # Check if ancestor has a sibling (process at same depth not in ancestor's subtree)
                 if ancestor_at_level != -1:
                     # Find where ancestor's subtree ends
@@ -204,13 +210,13 @@ class TmuxResourceMonitor:
                         elif processes[i]["depth"] <= level:
                             # Reached a process at same or lower level
                             break
-                    
+
                     # Check if there's a process at this level after the subtree
                     for i in range(subtree_end + 1, len(processes)):
                         if processes[i]["depth"] == level:
                             has_sibling = True
                             break
-                
+
                 prefix_parts.append("│   " if has_sibling else "    ")
 
         return "".join(prefix_parts)
@@ -257,7 +263,14 @@ class TmuxResourceMonitor:
                     continue
                 try:
                     panes_result = subprocess.run(
-                        ["tmux", "list-panes", "-t", f"{session_name}:{window_idx}", "-F", "#{pane_pid}"],
+                        [
+                            "tmux",
+                            "list-panes",
+                            "-t",
+                            f"{session_name}:{window_idx}",
+                            "-F",
+                            "#{pane_pid}",
+                        ],
                         capture_output=True,
                         text=True,
                         check=True,
@@ -304,13 +317,15 @@ class TmuxResourceMonitor:
                     except (psutil.NoSuchProcess, psutil.AccessDenied):
                         continue
 
-                self.sessions_data.append(SessionStats(
-                    name=session_name,
-                    cpu_total=session_cpu,
-                    ram_total=session_ram,
-                    process_count=session_process_count,
-                    window_count=window_count
-                ))
+                self.sessions_data.append(
+                    SessionStats(
+                        name=session_name,
+                        cpu_total=session_cpu,
+                        ram_total=session_ram,
+                        process_count=session_process_count,
+                        window_count=window_count,
+                    )
+                )
             except Exception:
                 continue
 
@@ -340,7 +355,8 @@ class TmuxResourceMonitor:
         self.tmux_memory_mb = total_tmux_ram // 1024
         self.tmux_memory_percent = (
             (total_tmux_ram * 100) / (self.total_ram_mb * 1024)
-            if self.total_ram_mb > 0 else 0
+            if self.total_ram_mb > 0
+            else 0
         )
 
     def get_tmux_windows(self):
@@ -418,7 +434,7 @@ class TmuxResourceMonitor:
                         children = list(parent.children())
                         if children:
                             last_child = children[-1]
-                            is_last_child = (last_child.pid == pid)
+                            is_last_child = last_child.pid == pid
                     except (psutil.NoSuchProcess, psutil.AccessDenied):
                         pass
 
@@ -441,7 +457,9 @@ class TmuxResourceMonitor:
 
                 try:
                     for idx, child in enumerate(children):
-                        child_processes = self.get_process_info(child.pid, depth + 1, pid)
+                        child_processes = self.get_process_info(
+                            child.pid, depth + 1, pid
+                        )
                         processes.extend(child_processes)
                 except (psutil.NoSuchProcess, psutil.AccessDenied):
                     pass
@@ -568,7 +586,9 @@ class TmuxResourceMonitor:
                     self.current_tab = found_idx
                 else:
                     # Window was removed, clamp to valid range
-                    self.current_tab = max(0, min(self.current_tab, len(self.windows_data) - 1))
+                    self.current_tab = max(
+                        0, min(self.current_tab, len(self.windows_data) - 1)
+                    )
 
     def draw_header(self, stdscr, height, width):
         """Draw the header with session summary."""
@@ -588,9 +608,16 @@ class TmuxResourceMonitor:
 
             # Title line - session name with highlighted "Session:"
             x_pos = max(0, (width - len(f"Session: {self.session_name}")) // 2)
-            stdscr.addstr(0, x_pos, "Session:", curses.color_pair(2) | curses.A_REVERSE | curses.A_BOLD)
+            stdscr.addstr(
+                0,
+                x_pos,
+                "Session:",
+                curses.color_pair(2) | curses.A_REVERSE | curses.A_BOLD,
+            )
             stdscr.addstr(0, x_pos + 8, " ", curses.color_pair(3))
-            stdscr.addstr(0, x_pos + 9, self.session_name, curses.color_pair(3) | curses.A_BOLD)
+            stdscr.addstr(
+                0, x_pos + 9, self.session_name, curses.color_pair(3) | curses.A_BOLD
+            )
 
             # Summary line with different colors for labels, values, and separators
             summary_parts = [
@@ -605,17 +632,17 @@ class TmuxResourceMonitor:
                 (f" ({total_ram_percent:.1f}%)", curses.color_pair(1)),
                 (" | ", curses.color_pair(5)),
                 ("Processes: ", curses.color_pair(2)),
-                (str(total_processes), curses.color_pair(1))
+                (str(total_processes), curses.color_pair(1)),
             ]
-            
+
             # Build the full string and calculate positions for colored segments
             full_summary = "".join(part[0] for part in summary_parts)
             if len(full_summary) > width - 2:
                 full_summary = full_summary[: width - 5] + "..."
-            
+
             x_pos = max(0, (width - len(full_summary)) // 2)
             current_x = x_pos
-            
+
             for text, color in summary_parts:
                 if current_x + len(text) > width - 1:
                     break
@@ -706,9 +733,9 @@ class TmuxResourceMonitor:
             (f" ({window.index})", curses.color_pair(1) | curses.A_BOLD),
             (" - ", curses.color_pair(5)),
             (f"{len(window.pane_pids)}", curses.color_pair(1) | curses.A_BOLD),
-            (" panes", curses.color_pair(2))
+            (" panes", curses.color_pair(2)),
         ]
-        
+
         current_x = 0
         for text, color in window_parts:
             if current_x + len(text) > width - 1:
@@ -718,7 +745,7 @@ class TmuxResourceMonitor:
                 current_x += len(text)
             except curses.error:
                 break
-        
+
         y_pos += 1
 
         # Process table header
@@ -750,11 +777,13 @@ class TmuxResourceMonitor:
         # Process list
         displayed_processes = 0
         first_displayed_process = 0
-        
+
         # If browsing is active, try to keep selected process visible
         if self.process_browsing_active and window.processes:
             if self.selected_process_index >= lines_for_processes:
-                first_displayed_process = self.selected_process_index - lines_for_processes + 1
+                first_displayed_process = (
+                    self.selected_process_index - lines_for_processes + 1
+                )
 
         for process_idx, process in enumerate(window.processes):
             if process_idx < first_displayed_process:
@@ -764,66 +793,95 @@ class TmuxResourceMonitor:
 
             tree_prefix = self.get_tree_prefix(process, window.processes, process_idx)
             mem_str = self.format_memory(process["memory_kb"])
- 
+
             command = process["command"]
-            
+
             # Build base line without tree (PID, CPU, MEM)
             base_line = f"{process['pid']:>8} {process['cpu']:>6.1f} {mem_str:>12}"
             base_line_len = len(base_line)
-            
+
             # Tree starts right after base_line
             tree_x = base_line_len
-            
+
             # Command starts after tree prefix + 1 space
             command_x = tree_x + len(tree_prefix) + 1
-            
+
             # Calculate available space for command
             max_cmd_len = width - command_x - 1
- 
-            if self.process_browsing_active and process_idx == self.selected_process_index:
+
+            if (
+                self.process_browsing_active
+                and process_idx == self.selected_process_index
+            ):
                 if len(command) > max_cmd_len:
-                    command = command[self.horizontal_scroll_offset:self.horizontal_scroll_offset + max_cmd_len]
+                    command = command[
+                        self.horizontal_scroll_offset : self.horizontal_scroll_offset
+                        + max_cmd_len
+                    ]
                     if self.horizontal_scroll_offset > 0:
                         command = "<<" + command[2:]
-                    if self.horizontal_scroll_offset + max_cmd_len < len(process["command"]):
+                    if self.horizontal_scroll_offset + max_cmd_len < len(
+                        process["command"]
+                    ):
                         command = command[:-2] + ">>"
                 else:
                     command = command[:max_cmd_len]
             else:
                 if len(command) > max_cmd_len and max_cmd_len > 3:
                     command = command[: max_cmd_len - 3] + "..."
- 
-            is_selected = self.process_browsing_active and process_idx == self.selected_process_index
-            
+
+            is_selected = (
+                self.process_browsing_active
+                and process_idx == self.selected_process_index
+            )
+
             try:
                 # Draw the base line (PID, CPU, MEM)
                 if is_selected:
                     stdscr.addstr(y_pos, 0, base_line, curses.color_pair(8))
                 else:
-                    color = curses.color_pair(1) if process['cpu'] > 10 else curses.color_pair(0)
+                    color = (
+                        curses.color_pair(1)
+                        if process["cpu"] > 10
+                        else curses.color_pair(0)
+                    )
                     stdscr.addstr(y_pos, 0, base_line, color)
-                
+
                 # Draw tree prefix in cyan (no extra space before - starts at tree_x)
                 if tree_prefix:
                     if is_selected:
-                        stdscr.addstr(y_pos, tree_x, tree_prefix, curses.color_pair(10) | curses.A_BOLD)
+                        stdscr.addstr(
+                            y_pos,
+                            tree_x,
+                            tree_prefix,
+                            curses.color_pair(10) | curses.A_BOLD,
+                        )
                     else:
-                        stdscr.addstr(y_pos, tree_x, tree_prefix, curses.color_pair(9) | curses.A_BOLD)
-                
+                        stdscr.addstr(
+                            y_pos,
+                            tree_x,
+                            tree_prefix,
+                            curses.color_pair(9) | curses.A_BOLD,
+                        )
+
                 # Draw space between tree prefix and command with appropriate color
                 space_x = tree_x + len(tree_prefix)
                 if is_selected:
                     stdscr.addstr(y_pos, space_x, " ", curses.color_pair(8))
                 else:
                     stdscr.addstr(y_pos, space_x, " ", curses.color_pair(0))
-                
+
                 # Draw command at calculated position (tree_x + prefix length + 1 for space)
                 if is_selected:
                     stdscr.addstr(y_pos, command_x, command, curses.color_pair(8))
                 else:
-                    color = curses.color_pair(1) if process['cpu'] > 10 else curses.color_pair(0)
+                    color = (
+                        curses.color_pair(1)
+                        if process["cpu"] > 10
+                        else curses.color_pair(0)
+                    )
                     stdscr.addstr(y_pos, command_x, command, color)
-                    
+
             except curses.error:
                 break
             y_pos += 1
@@ -838,7 +896,7 @@ class TmuxResourceMonitor:
         total_line = f"TOTAL: CPU {window.cpu_total:.1f}% | RAM {window_ram_mb}MB ({window_ram_percent:.1f}%) | Processes {window.process_count}"
 
         if len(total_line) > width - 1:
-            total_line = total_line[:width-4] + "..."
+            total_line = total_line[: width - 4] + "..."
 
         try:
             stdscr.addstr(totals_y, 0, total_line, curses.color_pair(1) | curses.A_BOLD)
@@ -887,7 +945,7 @@ class TmuxResourceMonitor:
             "  • Real-time updates",
             "  • Lightweight curses-based interface",
             "",
-            "Press any key to return to the monitor..."
+            "Press any key to return to the monitor...",
         ]
 
         start_y = max(0, (height - len(help_lines)) // 2)
@@ -896,7 +954,12 @@ class TmuxResourceMonitor:
             if start_y + i < height - 1:
                 try:
                     if i == 0:
-                        stdscr.addstr(start_y + i, (width - len(line)) // 2, line, curses.color_pair(3) | curses.A_BOLD)
+                        stdscr.addstr(
+                            start_y + i,
+                            (width - len(line)) // 2,
+                            line,
+                            curses.color_pair(3) | curses.A_BOLD,
+                        )
                     else:
                         stdscr.addstr(start_y + i, 0, line, curses.color_pair(0))
                 except curses.error:
@@ -912,7 +975,12 @@ class TmuxResourceMonitor:
         x_pos = max(0, (width - len(title)) // 2)
         stdscr.addstr(y_pos, x_pos, title, curses.color_pair(3) | curses.A_BOLD)
         if self.browse_sessions:
-            stdscr.addstr(y_pos, x_pos + len(title) + 1, "[BROWSE]", curses.color_pair(8) | curses.A_REVERSE)
+            stdscr.addstr(
+                y_pos,
+                x_pos + len(title) + 1,
+                "[BROWSE]",
+                curses.color_pair(8) | curses.A_REVERSE,
+            )
         y_pos += 2
 
         sys_cpu_str = f"System CPU: {self.system_cpu_percent:.1f}%"
@@ -923,7 +991,9 @@ class TmuxResourceMonitor:
         y_pos += 1
 
         tmux_cpu_str = f"Tmux CPU: {self.tmux_cpu_percent:.1f}%"
-        tmux_mem_str = f"Tmux MEM: {self.tmux_memory_mb} MB ({self.tmux_memory_percent:.1f}%)"
+        tmux_mem_str = (
+            f"Tmux MEM: {self.tmux_memory_mb} MB ({self.tmux_memory_percent:.1f}%)"
+        )
 
         stdscr.addstr(y_pos, 0, tmux_cpu_str, curses.color_pair(4) | curses.A_BOLD)
         stdscr.addstr(y_pos, 25, tmux_mem_str, curses.color_pair(4) | curses.A_BOLD)
@@ -969,7 +1039,11 @@ class TmuxResourceMonitor:
             current_y = y_pos + line_idx
 
             ram_mb = session.ram_total // 1024
-            ram_percent = (session.ram_total * 100) / (self.total_ram_mb * 1024) if self.total_ram_mb > 0 else 0
+            ram_percent = (
+                (session.ram_total * 100) / (self.total_ram_mb * 1024)
+                if self.total_ram_mb > 0
+                else 0
+            )
 
             is_selected = self.browse_sessions and idx == self.selected_session_index
 
@@ -984,7 +1058,7 @@ class TmuxResourceMonitor:
                 color = curses.color_pair(1) if idx % 2 == 0 else curses.color_pair(0)
 
             try:
-                stdscr.addstr(current_y, 0, row[:width-1], color)
+                stdscr.addstr(current_y, 0, row[: width - 1], color)
             except curses.error:
                 pass
 
@@ -996,7 +1070,9 @@ class TmuxResourceMonitor:
         totals_line = f"{'TOTAL':<20} {totals_cpu:>7.1f}% {totals_ram_mb:>6d}MB({self.tmux_memory_percent:>4.1f}%) {totals_procs:>7} {totals_wins:>6}"
         totals_y = height - 3
         try:
-            stdscr.addstr(totals_y, 0, totals_line, curses.color_pair(1) | curses.A_BOLD)
+            stdscr.addstr(
+                totals_y, 0, totals_line, curses.color_pair(1) | curses.A_BOLD
+            )
         except curses.error:
             pass
 
@@ -1004,17 +1080,17 @@ class TmuxResourceMonitor:
         """Draw input prompt for signal number."""
         if not self.windows_data:
             return
-        
+
         window = self.windows_data[self.current_tab]
         if not window.processes or self.selected_process_index >= len(window.processes):
             return
-        
+
         process = window.processes[self.selected_process_index]
         prompt = f"Send signal to PID {process['pid']}: [ {self.input_buffer} ]"
-        
+
         # Draw prompt just above the footer
         prompt_y = height - 2
-        
+
         try:
             # Clear the line first
             stdscr.move(prompt_y, 0)
@@ -1035,96 +1111,109 @@ class TmuxResourceMonitor:
         """Switch to previous tab."""
         if self.windows_data:
             self.current_tab = (self.current_tab - 1) % len(self.windows_data)
-    
+
     def send_signal_to_process(self, signal_number):
         """Send a signal to the currently selected process."""
         if not self.windows_data:
             return False
-        
+
         window = self.windows_data[self.current_tab]
         if not window.processes or self.selected_process_index >= len(window.processes):
             return False
-        
+
         process = window.processes[self.selected_process_index]
         try:
-            proc = psutil.Process(process['pid'])
+            proc = psutil.Process(process["pid"])
             proc.send_signal(signal_number)
             return True
         except (psutil.NoSuchProcess, psutil.AccessDenied):
             return False
-    
+
     def copy_to_clipboard(self, text):
         """Copy text to clipboard using available clipboard tools (Wayland/X11).
         Runs asynchronously to prevent UI freezing."""
+
         def async_copy():
             """Run clipboard copy in background thread with timeout."""
             # Try wl-copy first (Wayland)
             try:
                 subprocess.run(
-                    ['wl-copy'],
-                    input=text.encode('utf-8'),
+                    ["wl-copy"],
+                    input=text.encode("utf-8"),
                     timeout=1.0,
                     capture_output=True,
-                    check=True
+                    check=True,
                 )
                 return
-            except (FileNotFoundError, subprocess.TimeoutExpired, subprocess.CalledProcessError):
+            except (
+                FileNotFoundError,
+                subprocess.TimeoutExpired,
+                subprocess.CalledProcessError,
+            ):
                 pass
 
             # Fallback to xclip (X11)
             try:
                 subprocess.run(
-                    ['xclip', '-selection', 'clipboard'],
-                    input=text.encode('utf-8'),
+                    ["xclip", "-selection", "clipboard"],
+                    input=text.encode("utf-8"),
                     timeout=1.0,
                     capture_output=True,
-                    check=True
+                    check=True,
                 )
                 return
-            except (FileNotFoundError, subprocess.TimeoutExpired, subprocess.CalledProcessError):
+            except (
+                FileNotFoundError,
+                subprocess.TimeoutExpired,
+                subprocess.CalledProcessError,
+            ):
                 pass
 
             # Fallback to xsel (X11)
             try:
                 subprocess.run(
-                    ['xsel', '--clipboard', '--input'],
-                    input=text.encode('utf-8'),
+                    ["xsel", "--clipboard", "--input"],
+                    input=text.encode("utf-8"),
                     timeout=1.0,
                     capture_output=True,
-                    check=True
+                    check=True,
                 )
                 return
-            except (FileNotFoundError, subprocess.TimeoutExpired, subprocess.CalledProcessError):
+            except (
+                FileNotFoundError,
+                subprocess.TimeoutExpired,
+                subprocess.CalledProcessError,
+            ):
                 pass
 
         # Start async copy in daemon thread
         thread = threading.Thread(target=async_copy, daemon=True)
         thread.start()
         return True
-    
+
     def copy_process_command(self):
         """Copy the selected process's command to clipboard."""
         if not self.windows_data:
             return False
-        
+
         window = self.windows_data[self.current_tab]
         if not window.processes or self.selected_process_index >= len(window.processes):
             return False
-        
+
         process = window.processes[self.selected_process_index]
-        return self.copy_to_clipboard(process['command'])
-    
+        return self.copy_to_clipboard(process["command"])
+
     def copy_process_pid(self):
         """Copy the selected process's PID to clipboard."""
         if not self.windows_data:
             return False
-        
+
         window = self.windows_data[self.current_tab]
         if not window.processes or self.selected_process_index >= len(window.processes):
             return False
-        
+
         process = window.processes[self.selected_process_index]
-        return self.copy_to_clipboard(str(process['pid']))
+        return self.copy_to_clipboard(str(process["pid"]))
 
     def handle_input(self, stdscr):
         """Handle keyboard input - no separate thread to avoid curses issues."""
@@ -1140,17 +1229,23 @@ class TmuxResourceMonitor:
                     next_key = stdscr.getch()
                     stdscr.timeout(-1)  # Reset to blocking
                     stdscr.nodelay(True)  # Set back to non-blocking
-                    
+
                     if next_key != -1:  # Alt+key combination
                         # Alt+key detected
                         alt_key = next_key
                         if self.process_browsing_active and self.windows_data:
                             window = self.windows_data[self.current_tab]
-                            if window.processes and self.selected_process_index < len(window.processes):
+                            if window.processes and self.selected_process_index < len(
+                                window.processes
+                            ):
                                 process = window.processes[self.selected_process_index]
-                                command = process['command']
-                                
-                                tree_prefix = self.get_tree_prefix(process, window.processes, self.selected_process_index)
+                                command = process["command"]
+
+                                tree_prefix = self.get_tree_prefix(
+                                    process,
+                                    window.processes,
+                                    self.selected_process_index,
+                                )
                                 # Calculate actual base line length to get correct positioning
                                 base_line = f"{process['pid']:>8} {process['cpu']:>6.1f} {self.format_memory(process['memory_kb']):>12}"
                                 base_line_len = len(base_line)
@@ -1158,17 +1253,29 @@ class TmuxResourceMonitor:
                                 command_start = base_line_len + len(tree_prefix) + 1
                                 height, width = stdscr.getmaxyx()
                                 max_cmd_len = width - command_start - 1
-                                
-                                if alt_key == curses.KEY_LEFT or alt_key == ord('h') or alt_key == ord('H'):
-                                    self.horizontal_scroll_offset = max(0, self.horizontal_scroll_offset - 10)
-                                elif alt_key == curses.KEY_RIGHT or alt_key == ord('l') or alt_key == ord('L'):
+
+                                if (
+                                    alt_key == curses.KEY_LEFT
+                                    or alt_key == ord("h")
+                                    or alt_key == ord("H")
+                                ):
+                                    self.horizontal_scroll_offset = max(
+                                        0, self.horizontal_scroll_offset - 10
+                                    )
+                                elif (
+                                    alt_key == curses.KEY_RIGHT
+                                    or alt_key == ord("l")
+                                    or alt_key == ord("L")
+                                ):
                                     max_offset = max(0, len(command) - max_cmd_len + 4)
-                                    self.horizontal_scroll_offset = min(max_offset, self.horizontal_scroll_offset + 10)
+                                    self.horizontal_scroll_offset = min(
+                                        max_offset, self.horizontal_scroll_offset + 10
+                                    )
                         return
                     # If we get here, it was just ESC, continue processing below
-                
+
                 # Handle input mode (signal number entry)
-                if self.input_mode == 'signal':
+                if self.input_mode == "signal":
                     if key == 10 or key == 13:  # Enter
                         if self.input_buffer.strip():
                             try:
@@ -1187,7 +1294,7 @@ class TmuxResourceMonitor:
                     elif 48 <= key <= 57:  # 0-9
                         self.input_buffer += chr(key)
                     return
-                
+
                 # Normal mode or process browsing mode
                 if key == ord("q") or key == ord("Q"):
                     self.running = False
@@ -1214,7 +1321,10 @@ class TmuxResourceMonitor:
                             self.selected_session_index += 1
                         else:
                             self.selected_session_index = 0
-                    elif self.windows_data and self.windows_data[self.current_tab].processes:
+                    elif (
+                        self.windows_data
+                        and self.windows_data[self.current_tab].processes
+                    ):
                         self.process_browsing_active = True
                         window = self.windows_data[self.current_tab]
                         if self.selected_process_index < len(window.processes) - 1:
@@ -1246,12 +1356,16 @@ class TmuxResourceMonitor:
                 elif key == ord("s") or key == ord("S"):
                     # Enter signal input mode
                     if self.process_browsing_active:
-                        self.input_mode = 'signal'
+                        self.input_mode = "signal"
                         self.input_buffer = ""
                 elif key == 3:  # Ctrl+C
                     self.running = False
                 elif key == 10 or key == 13:  # Enter
-                    if self.show_overview and self.browse_sessions and self.sessions_data:
+                    if (
+                        self.show_overview
+                        and self.browse_sessions
+                        and self.sessions_data
+                    ):
                         if self.selected_session_index < len(self.sessions_data):
                             selected = self.sessions_data[self.selected_session_index]
                             self.show_overview = False
@@ -1272,7 +1386,10 @@ class TmuxResourceMonitor:
                             self.selected_session_index += 1
                         else:
                             self.selected_session_index = 0
-                    elif self.windows_data and self.windows_data[self.current_tab].processes:
+                    elif (
+                        self.windows_data
+                        and self.windows_data[self.current_tab].processes
+                    ):
                         self.process_browsing_active = True
                         window = self.windows_data[self.current_tab]
                         if self.selected_process_index < len(window.processes) - 1:
@@ -1286,7 +1403,9 @@ class TmuxResourceMonitor:
                             self.selected_session_index -= 1
                         elif self.sessions_data:
                             self.selected_session_index = len(self.sessions_data) - 1
-                    elif self.process_browsing_active and self.selected_process_index > 0:
+                    elif (
+                        self.process_browsing_active and self.selected_process_index > 0
+                    ):
                         self.selected_process_index -= 1
                     elif self.process_browsing_active and self.windows_data:
                         window = self.windows_data[self.current_tab]
@@ -1298,7 +1417,12 @@ class TmuxResourceMonitor:
                 elif key == ord("x") or key == ord("X"):
                     if self.process_browsing_active:
                         self.send_signal_to_process(15)  # SIGTERM
-                    elif self.show_overview and self.browse_sessions and self.sessions_data and self.selected_session_index > 0:
+                    elif (
+                        self.show_overview
+                        and self.browse_sessions
+                        and self.sessions_data
+                        and self.selected_session_index > 0
+                    ):
                         self.selected_session_index -= 1
                     elif self.show_overview:
                         self.browse_sessions = True
@@ -1307,7 +1431,12 @@ class TmuxResourceMonitor:
                     else:
                         self.prev_tab()
                 elif key == curses.KEY_RIGHT or key == ord("l") or key == ord("L"):
-                    if self.show_overview and self.browse_sessions and self.sessions_data and self.selected_session_index < len(self.sessions_data) - 1:
+                    if (
+                        self.show_overview
+                        and self.browse_sessions
+                        and self.sessions_data
+                        and self.selected_session_index < len(self.sessions_data) - 1
+                    ):
                         self.selected_session_index += 1
                     elif self.show_overview:
                         self.browse_sessions = True
@@ -1361,14 +1490,22 @@ class TmuxResourceMonitor:
                         if width > len(footer):
                             stdscr.addstr(height - 1, 0, footer, curses.color_pair(5))
                         else:
-                            stdscr.addstr(height - 1, 0, "q=quit j/k=browse Enter=select", curses.color_pair(5))
+                            stdscr.addstr(
+                                height - 1,
+                                0,
+                                "q=quit j/k=browse Enter=select",
+                                curses.color_pair(5),
+                            )
 
                         stdscr.refresh()
                     except curses.error:
                         pass
 
                     # Collect data if needed
-                    if not self.input_mode and current_time - last_refresh >= self.refresh_rate:
+                    if (
+                        not self.input_mode
+                        and current_time - last_refresh >= self.refresh_rate
+                    ):
                         self.collect_system_stats()
                         last_refresh = current_time
 
@@ -1427,7 +1564,7 @@ class TmuxResourceMonitor:
                     y_pos = self.draw_tabs(stdscr, y_pos, height, width)
                     self.draw_window_details(stdscr, y_pos, height, width)
 
-                    if self.input_mode == 'signal':
+                    if self.input_mode == "signal":
                         curses.curs_set(1)
                         self.draw_input_prompt(stdscr, height, width)
                     else:
@@ -1439,7 +1576,10 @@ class TmuxResourceMonitor:
                     pass
 
                 # Then collect data if needed (don't block rendering)
-                if not self.input_mode and current_time - last_refresh >= self.refresh_rate:
+                if (
+                    not self.input_mode
+                    and current_time - last_refresh >= self.refresh_rate
+                ):
                     self.collect_window_data()
                     last_refresh = current_time
 
@@ -1506,10 +1646,15 @@ Press '?' in the monitor for keyboard controls.
    - Real-time updates
    - Lightweight curses-based interface
    - Works standalone or as tmux plugin
-         """
+         """,
     )
 
-    parser.add_argument("session_name", help="Name of the tmux session to monitor", default=None, nargs="?")
+    parser.add_argument(
+        "session_name",
+        help="Name of the tmux session to monitor",
+        default=None,
+        nargs="?",
+    )
 
     parser.add_argument(
         "-w",
@@ -1571,7 +1716,7 @@ Press '?' in the monitor for keyboard controls.
 
     refresh_rate = args.refresh_rate
     if refresh_rate is None:
-        refresh_rate_str = read_tmux_option('tmux_resource_monitor_refresh_rate')
+        refresh_rate_str = read_tmux_option("tmux_resource_monitor_refresh_rate")
         if not refresh_rate_str:
             refresh_rate_str = "2.0"
         try:
@@ -1595,22 +1740,19 @@ Press '?' in the monitor for keyboard controls.
 
     session_name = args.session_name
     if not session_name:
-        session_name = os.environ.get('TMUX_SESSION_NAME', None)
+        session_name = os.environ.get("TMUX_SESSION_NAME", None)
 
     # Sticky tmux option takes precedence over current window from CLI
-    tmux_filter = read_tmux_option('tmux_resource_monitor_window_filter')
+    tmux_filter = read_tmux_option("tmux_resource_monitor_window_filter")
     if tmux_filter:
         window_filter = tmux_filter
     else:
         window_filter = args.window_filter
 
-    monitor = TmuxResourceMonitor(
-        session_name, window_filter, refresh_rate
-    )
+    monitor = TmuxResourceMonitor(session_name, window_filter, refresh_rate)
 
     monitor.run()
 
 
 if __name__ == "__main__":
     main()
-
