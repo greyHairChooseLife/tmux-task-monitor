@@ -1561,24 +1561,31 @@ class TmuxResourceMonitor:
 
                 self.handle_input(stdscr)
 
-                if self.show_overview:
-                    continue
-
                 # Prioritize rendering - always render first
                 try:
                     height, width = stdscr.getmaxyx()
                     stdscr.erase()
 
-                    y_pos = self.draw_header(stdscr, height, width)
-                    y_pos = self.draw_tabs(stdscr, y_pos, height, width)
-                    self.draw_window_details(stdscr, y_pos, height, width)
-
-                    if self.input_mode == "signal":
-                        curses.curs_set(1)
-                        self.draw_input_prompt(stdscr, height, width)
+                    if self.show_overview:
+                        # Render overview mode
+                        self.draw_overview(stdscr, height, width)
+                        footer = "Press 'q' to quit, 'j/k' to browse, Enter to select session"
+                        if width > len(footer):
+                            stdscr.addstr(height - 1, 0, footer, curses.color_pair(5))
+                        else:
+                            stdscr.addstr(height - 1, 0, "q=quit j/k=browse Enter=select", curses.color_pair(5))
                     else:
-                        curses.curs_set(0)
-                        self.draw_footer(stdscr, height, width)
+                        # Render session detail mode
+                        y_pos = self.draw_header(stdscr, height, width)
+                        y_pos = self.draw_tabs(stdscr, y_pos, height, width)
+                        self.draw_window_details(stdscr, y_pos, height, width)
+
+                        if self.input_mode == "signal":
+                            curses.curs_set(1)
+                            self.draw_input_prompt(stdscr, height, width)
+                        else:
+                            curses.curs_set(0)
+                            self.draw_footer(stdscr, height, width)
 
                     stdscr.refresh()
                 except curses.error:
@@ -1589,7 +1596,10 @@ class TmuxResourceMonitor:
                     not self.input_mode
                     and current_time - last_refresh >= self.refresh_rate
                 ):
-                    self.collect_window_data()
+                    if self.show_overview:
+                        self.collect_system_stats()
+                    else:
+                        self.collect_window_data()
                     last_refresh = current_time
 
                 # Minimal sleep to prevent CPU spin
