@@ -918,7 +918,7 @@ class TmuxResourceMonitor:
             "Tmux Resource Monitor - Keyboard Controls",
             "",
             "Navigation:",
-            "  Esc                   Go back to overview of all sessions",
+            "  o or O                Go back to overview of all sessions",
             "  <- -> or h l          Navigate between windows",
             "  q or Q                Exit the monitor",
             "  ?                     Show/hide this help screen",
@@ -1309,6 +1309,12 @@ class TmuxResourceMonitor:
                         stdscr.getch()
                         stdscr.nodelay(True)
                         self.show_help = False
+                elif key == ord("o") or key == ord("O"):
+                    # Go back to overview mode
+                    if not self.show_overview:
+                        self.show_overview = True
+                        self.browse_sessions = False
+                        self.collect_system_stats()
                 elif key == curses.KEY_LEFT or key == ord("h") or key == ord("H"):
                     self.prev_tab()
                 elif key == curses.KEY_RIGHT or key == ord("l") or key == ord("L"):
