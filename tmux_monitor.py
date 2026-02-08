@@ -918,6 +918,7 @@ class TmuxResourceMonitor:
             "Tmux Resource Monitor - Keyboard Controls",
             "",
             "Navigation:",
+            "  Esc                   Go back to overview of all sessions",
             "  <- -> or h l          Navigate between windows",
             "  q or Q                Exit the monitor",
             "  ?                     Show/hide this help screen",
@@ -1222,7 +1223,28 @@ class TmuxResourceMonitor:
         try:
             key = stdscr.getch()
             if key != -1:  # Key was pressed
-                # Handle Alt key combinations first
+                # Handle input mode (signal number entry) first
+                if self.input_mode == "signal":
+                    if key == 10 or key == 13:  # Enter
+                        if self.input_buffer.strip():
+                            try:
+                                signal_number = int(self.input_buffer.strip())
+                                self.send_signal_to_process(signal_number)
+                            except ValueError:
+                                pass  # Invalid number, ignore
+                        self.input_mode = None
+                        self.input_buffer = ""
+                    elif key == 27:  # ESC
+                        self.input_mode = None
+                        self.input_buffer = ""
+                    elif key == curses.KEY_BACKSPACE or key == 127:
+                        if self.input_buffer:
+                            self.input_buffer = self.input_buffer[:-1]
+                    elif 48 <= key <= 57:  # 0-9
+                        self.input_buffer += chr(key)
+                    return
+
+                # Handle Alt key combinations
                 if key == 27:  # ESC - could be Alt+key or just ESC
                     # Try to detect Alt+key by checking for another key quickly
                     stdscr.timeout(50)  # Short timeout to detect Alt
@@ -1272,28 +1294,7 @@ class TmuxResourceMonitor:
                                         max_offset, self.horizontal_scroll_offset + 10
                                     )
                         return
-                    # If we get here, it was just ESC, continue processing below
-
-                # Handle input mode (signal number entry)
-                if self.input_mode == "signal":
-                    if key == 10 or key == 13:  # Enter
-                        if self.input_buffer.strip():
-                            try:
-                                signal_number = int(self.input_buffer.strip())
-                                self.send_signal_to_process(signal_number)
-                            except ValueError:
-                                pass  # Invalid number, ignore
-                        self.input_mode = None
-                        self.input_buffer = ""
-                    elif key == 27:  # ESC
-                        self.input_mode = None
-                        self.input_buffer = ""
-                    elif key == curses.KEY_BACKSPACE or key == 127:
-                        if self.input_buffer:
-                            self.input_buffer = self.input_buffer[:-1]
-                    elif 48 <= key <= 57:  # 0-9
-                        self.input_buffer += chr(key)
-                    return
+                    # If we get here, it was just ESC, fall through to ESC handler below
 
                 # Normal mode or process browsing mode
                 if key == ord("q") or key == ord("Q"):
@@ -1374,9 +1375,11 @@ class TmuxResourceMonitor:
                             self.current_tab = 0
                             self.collect_window_data()
                 elif key == 27:  # ESC
-                    if self.show_overview:
-                        self.show_overview = False
+                    # Go back to overview mode
+                    if not self.show_overview:
+                        self.show_overview = True
                         self.browse_sessions = False
+                        self.collect_system_stats()
                 elif key == ord("j") or key == curses.KEY_DOWN:
                     if self.show_overview:
                         self.browse_sessions = True
