@@ -164,10 +164,15 @@ class TmuxResourceMonitor:
             self.colors_initialized = True
 
     def format_memory(self, rss_kb):
-        """Format memory usage with MB and percentage."""
-        mb = rss_kb // 1024
+        """Format memory usage with MB/GB and percentage."""
+        mb = rss_kb / 1024
         percent = (rss_kb * 100) / (self.total_ram_mb * 1024)
-        return f"{mb:4d} MB ({percent:5.1f}%)"
+
+        if mb >= 1024:
+            gb = mb / 1024
+            return f"{gb:5.2f} GB ({percent:5.1f}%)"
+        else:
+            return f"{mb:6.1f} MB ({percent:5.1f}%)"
 
     def get_tree_prefix(self, process, processes, index):
         """Generate tree prefix string for a process."""
