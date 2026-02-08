@@ -637,14 +637,14 @@ class TmuxResourceMonitor:
                 if total_cpu > 80
                 else curses.color_pair(2)
                 if total_cpu > 50
-                else curses.color_pair(1)
+                else curses.color_pair(0)
             )
             mem_color = (
                 curses.color_pair(4)
                 if total_ram_percent > 80
                 else curses.color_pair(2)
                 if total_ram_percent > 50
-                else curses.color_pair(1)
+                else curses.color_pair(0)
             )
 
             summary_parts = [
@@ -867,22 +867,31 @@ class TmuxResourceMonitor:
                 if is_selected:
                     stdscr.addstr(y_pos, 0, base_line, curses.color_pair(8))
                 else:
-                    # Color based on CPU and memory usage
+                    # Draw PID
+                    pid_str = f"{process['pid']:>8}"
+                    stdscr.addstr(y_pos, 0, pid_str, curses.color_pair(0))
+
+                    # Draw CPU with color
                     cpu = process["cpu"]
-                    mem_percent = (process["memory_kb"] * 100) / (
-                        self.total_ram_mb * 1024
-                    )
-
-                    if cpu > 50 or mem_percent > 20:
-                        color = curses.color_pair(4)  # Red - high usage
-                    elif cpu > 20 or mem_percent > 10:
-                        color = curses.color_pair(2)  # Yellow - medium usage
-                    elif cpu > 5 or mem_percent > 5:
-                        color = curses.color_pair(1)  # Green - low usage
+                    cpu_str = f" {cpu:>6.1f}"
+                    if cpu > 50:
+                        cpu_color = curses.color_pair(4)  # Red
+                    elif cpu > 20:
+                        cpu_color = curses.color_pair(2)  # Yellow
                     else:
-                        color = curses.color_pair(0)  # Default
+                        cpu_color = curses.color_pair(0)  # Default
+                    stdscr.addstr(y_pos, len(pid_str), cpu_str, cpu_color)
 
-                    stdscr.addstr(y_pos, 0, base_line, color)
+                    # Draw MEM with color
+                    mem_str = f" {self.format_memory(process['memory_kb']):>12}"
+                    mem_percent = (process["memory_kb"] * 100) / (self.total_ram_mb * 1024)
+                    if mem_percent > 20:
+                        mem_color = curses.color_pair(4)  # Red
+                    elif mem_percent > 10:
+                        mem_color = curses.color_pair(2)  # Yellow
+                    else:
+                        mem_color = curses.color_pair(0)  # Default
+                    stdscr.addstr(y_pos, len(pid_str) + len(cpu_str), mem_str, mem_color)
 
                 # Draw tree prefix in cyan (no extra space before - starts at tree_x)
                 if tree_prefix:
@@ -912,22 +921,8 @@ class TmuxResourceMonitor:
                 if is_selected:
                     stdscr.addstr(y_pos, command_x, command, curses.color_pair(8))
                 else:
-                    # Use same color as base line for consistency
-                    cpu = process["cpu"]
-                    mem_percent = (process["memory_kb"] * 100) / (
-                        self.total_ram_mb * 1024
-                    )
-
-                    if cpu > 50 or mem_percent > 20:
-                        color = curses.color_pair(4)  # Red
-                    elif cpu > 20 or mem_percent > 10:
-                        color = curses.color_pair(2)  # Yellow
-                    elif cpu > 5 or mem_percent > 5:
-                        color = curses.color_pair(1)  # Green
-                    else:
-                        color = curses.color_pair(0)  # Default
-
-                    stdscr.addstr(y_pos, command_x, command, color)
+                    # Command uses default color
+                    stdscr.addstr(y_pos, command_x, command, curses.color_pair(0))
 
             except curses.error:
                 break
@@ -958,7 +953,7 @@ class TmuxResourceMonitor:
         elif window.cpu_total > 50 or window_ram_percent > 50:
             total_color = curses.color_pair(2) | curses.A_BOLD  # Yellow
         else:
-            total_color = curses.color_pair(1) | curses.A_BOLD  # Green
+            total_color = curses.color_pair(0) | curses.A_BOLD  # Default
 
         try:
             stdscr.addstr(totals_y, 0, total_line, total_color)
@@ -1069,14 +1064,14 @@ class TmuxResourceMonitor:
             if self.system_cpu_percent > 80
             else curses.color_pair(2)
             if self.system_cpu_percent > 50
-            else curses.color_pair(1)
+            else curses.color_pair(0)
         )
         sys_mem_color = (
             curses.color_pair(4)
             if self.system_memory_percent > 80
             else curses.color_pair(2)
             if self.system_memory_percent > 50
-            else curses.color_pair(1)
+            else curses.color_pair(0)
         )
 
         stdscr.addstr(y_pos, 0, sys_cpu_str, sys_cpu_color | curses.A_BOLD)
@@ -1092,14 +1087,14 @@ class TmuxResourceMonitor:
             if self.tmux_cpu_percent > 80
             else curses.color_pair(2)
             if self.tmux_cpu_percent > 50
-            else curses.color_pair(1)
+            else curses.color_pair(0)
         )
         tmux_mem_color = (
             curses.color_pair(4)
             if self.tmux_memory_percent > 80
             else curses.color_pair(2)
             if self.tmux_memory_percent > 50
-            else curses.color_pair(1)
+            else curses.color_pair(0)
         )
 
         stdscr.addstr(y_pos, 0, tmux_cpu_str, tmux_cpu_color | curses.A_BOLD)
@@ -1165,12 +1160,12 @@ class TmuxResourceMonitor:
 
             if is_selected:
                 color = curses.color_pair(2) | curses.A_REVERSE | curses.A_BOLD
-            elif session.cpu_total > 50 or ram_percent > 50:
+            elif session.cpu_total > 80 or ram_percent > 80:
                 color = curses.color_pair(4)  # Red - high usage
-            elif session.cpu_total > 20 or ram_percent > 20:
+            elif session.cpu_total > 50 or ram_percent > 50:
                 color = curses.color_pair(2)  # Yellow - medium usage
             else:
-                color = curses.color_pair(1) if idx % 2 == 0 else curses.color_pair(0)
+                color = curses.color_pair(0)  # Default
 
             try:
                 stdscr.addstr(current_y, 0, row[: width - 1], color)
