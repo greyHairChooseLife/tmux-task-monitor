@@ -604,12 +604,18 @@ class TmuxResourceMonitor:
             total_cpu = sum(w.cpu_total for w in self.windows_data)
             total_ram = sum(w.ram_total for w in self.windows_data)
             total_processes = sum(w.process_count for w in self.windows_data)
-            total_ram_mb = total_ram // 1024
+            total_ram_mb = total_ram / 1024
             total_ram_percent = (
                 (total_ram * 100) / (self.total_ram_mb * 1024)
                 if self.total_ram_mb > 0
                 else 0
             )
+
+            # Format memory with GB if >= 1024 MB
+            if total_ram_mb >= 1024:
+                mem_str = f"{total_ram_mb / 1024:.2f}GB"
+            else:
+                mem_str = f"{total_ram_mb:.1f}MB"
 
             # Title line - session name with highlighted "Session:"
             x_pos = max(0, (width - len(f"Session: {self.session_name}")) // 2)
@@ -625,16 +631,32 @@ class TmuxResourceMonitor:
             )
 
             # Summary line with different colors for labels, values, and separators
+            # Color values based on usage
+            cpu_color = (
+                curses.color_pair(4)
+                if total_cpu > 80
+                else curses.color_pair(2)
+                if total_cpu > 50
+                else curses.color_pair(1)
+            )
+            mem_color = (
+                curses.color_pair(4)
+                if total_ram_percent > 80
+                else curses.color_pair(2)
+                if total_ram_percent > 50
+                else curses.color_pair(1)
+            )
+
             summary_parts = [
                 ("Windows: ", curses.color_pair(2)),
                 (str(len(self.windows_data)), curses.color_pair(1)),
                 (" | ", curses.color_pair(5)),
                 ("CPU: ", curses.color_pair(2)),
-                (f"{total_cpu:.1f}%", curses.color_pair(1)),
+                (f"{total_cpu:.1f}%", cpu_color),
                 (" | ", curses.color_pair(5)),
                 ("MEM: ", curses.color_pair(2)),
-                (f"{total_ram_mb}MB", curses.color_pair(1)),
-                (f" ({total_ram_percent:.1f}%)", curses.color_pair(1)),
+                (mem_str, mem_color),
+                (f" ({total_ram_percent:.1f}%)", mem_color),
                 (" | ", curses.color_pair(5)),
                 ("Processes: ", curses.color_pair(2)),
                 (str(total_processes), curses.color_pair(1)),
@@ -845,11 +867,21 @@ class TmuxResourceMonitor:
                 if is_selected:
                     stdscr.addstr(y_pos, 0, base_line, curses.color_pair(8))
                 else:
-                    color = (
-                        curses.color_pair(1)
-                        if process["cpu"] > 10
-                        else curses.color_pair(0)
+                    # Color based on CPU and memory usage
+                    cpu = process["cpu"]
+                    mem_percent = (process["memory_kb"] * 100) / (
+                        self.total_ram_mb * 1024
                     )
+
+                    if cpu > 50 or mem_percent > 20:
+                        color = curses.color_pair(4)  # Red - high usage
+                    elif cpu > 20 or mem_percent > 10:
+                        color = curses.color_pair(2)  # Yellow - medium usage
+                    elif cpu > 5 or mem_percent > 5:
+                        color = curses.color_pair(1)  # Green - low usage
+                    else:
+                        color = curses.color_pair(0)  # Default
+
                     stdscr.addstr(y_pos, 0, base_line, color)
 
                 # Draw tree prefix in cyan (no extra space before - starts at tree_x)
@@ -880,11 +912,21 @@ class TmuxResourceMonitor:
                 if is_selected:
                     stdscr.addstr(y_pos, command_x, command, curses.color_pair(8))
                 else:
-                    color = (
-                        curses.color_pair(1)
-                        if process["cpu"] > 10
-                        else curses.color_pair(0)
+                    # Use same color as base line for consistency
+                    cpu = process["cpu"]
+                    mem_percent = (process["memory_kb"] * 100) / (
+                        self.total_ram_mb * 1024
                     )
+
+                    if cpu > 50 or mem_percent > 20:
+                        color = curses.color_pair(4)  # Red
+                    elif cpu > 20 or mem_percent > 10:
+                        color = curses.color_pair(2)  # Yellow
+                    elif cpu > 5 or mem_percent > 5:
+                        color = curses.color_pair(1)  # Green
+                    else:
+                        color = curses.color_pair(0)  # Default
+
                     stdscr.addstr(y_pos, command_x, command, color)
 
             except curses.error:
@@ -896,15 +938,30 @@ class TmuxResourceMonitor:
         # Move to the line just before footer
         totals_y = height - 2
 
-        window_ram_mb = window.ram_total // 1024
+        window_ram_mb = window.ram_total / 1024
         window_ram_percent = (window.ram_total * 100) / (self.total_ram_mb * 1024)
-        total_line = f"TOTAL: CPU {window.cpu_total:.1f}% | RAM {window_ram_mb}MB ({window_ram_percent:.1f}%) | Processes {window.process_count}"
+
+        # Format memory with GB if >= 1024 MB
+        if window_ram_mb >= 1024:
+            ram_str = f"{window_ram_mb / 1024:.2f}GB"
+        else:
+            ram_str = f"{window_ram_mb:.1f}MB"
+
+        total_line = f"TOTAL: CPU {window.cpu_total:.1f}% | RAM {ram_str} ({window_ram_percent:.1f}%) | Processes {window.process_count}"
 
         if len(total_line) > width - 1:
             total_line = total_line[: width - 4] + "..."
 
+        # Color based on usage
+        if window.cpu_total > 80 or window_ram_percent > 80:
+            total_color = curses.color_pair(4) | curses.A_BOLD  # Red
+        elif window.cpu_total > 50 or window_ram_percent > 50:
+            total_color = curses.color_pair(2) | curses.A_BOLD  # Yellow
+        else:
+            total_color = curses.color_pair(1) | curses.A_BOLD  # Green
+
         try:
-            stdscr.addstr(totals_y, 0, total_line, curses.color_pair(1) | curses.A_BOLD)
+            stdscr.addstr(totals_y, 0, total_line, total_color)
         except curses.error:
             pass
 
@@ -989,20 +1046,64 @@ class TmuxResourceMonitor:
             )
         y_pos += 2
 
-        sys_cpu_str = f"System CPU: {self.system_cpu_percent:.1f}%"
-        sys_mem_str = f"System MEM: {self.system_memory_mb} MB ({self.system_memory_percent:.1f}%)"
+        # Format system memory
+        if self.system_memory_mb >= 1024:
+            sys_mem_display = f"{self.system_memory_mb / 1024:.2f} GB"
+        else:
+            sys_mem_display = f"{self.system_memory_mb} MB"
 
-        stdscr.addstr(y_pos, 0, sys_cpu_str, curses.color_pair(2) | curses.A_BOLD)
-        stdscr.addstr(y_pos, 25, sys_mem_str, curses.color_pair(2) | curses.A_BOLD)
+        # Format tmux memory
+        if self.tmux_memory_mb >= 1024:
+            tmux_mem_display = f"{self.tmux_memory_mb / 1024:.2f} GB"
+        else:
+            tmux_mem_display = f"{self.tmux_memory_mb} MB"
+
+        sys_cpu_str = f"System CPU: {self.system_cpu_percent:.1f}%"
+        sys_mem_str = (
+            f"System MEM: {sys_mem_display} ({self.system_memory_percent:.1f}%)"
+        )
+
+        # Color system stats based on usage
+        sys_cpu_color = (
+            curses.color_pair(4)
+            if self.system_cpu_percent > 80
+            else curses.color_pair(2)
+            if self.system_cpu_percent > 50
+            else curses.color_pair(1)
+        )
+        sys_mem_color = (
+            curses.color_pair(4)
+            if self.system_memory_percent > 80
+            else curses.color_pair(2)
+            if self.system_memory_percent > 50
+            else curses.color_pair(1)
+        )
+
+        stdscr.addstr(y_pos, 0, sys_cpu_str, sys_cpu_color | curses.A_BOLD)
+        stdscr.addstr(y_pos, 25, sys_mem_str, sys_mem_color | curses.A_BOLD)
         y_pos += 1
 
         tmux_cpu_str = f"Tmux CPU: {self.tmux_cpu_percent:.1f}%"
-        tmux_mem_str = (
-            f"Tmux MEM: {self.tmux_memory_mb} MB ({self.tmux_memory_percent:.1f}%)"
+        tmux_mem_str = f"Tmux MEM: {tmux_mem_display} ({self.tmux_memory_percent:.1f}%)"
+
+        # Color tmux stats
+        tmux_cpu_color = (
+            curses.color_pair(4)
+            if self.tmux_cpu_percent > 80
+            else curses.color_pair(2)
+            if self.tmux_cpu_percent > 50
+            else curses.color_pair(1)
+        )
+        tmux_mem_color = (
+            curses.color_pair(4)
+            if self.tmux_memory_percent > 80
+            else curses.color_pair(2)
+            if self.tmux_memory_percent > 50
+            else curses.color_pair(1)
         )
 
-        stdscr.addstr(y_pos, 0, tmux_cpu_str, curses.color_pair(4) | curses.A_BOLD)
-        stdscr.addstr(y_pos, 25, tmux_mem_str, curses.color_pair(4) | curses.A_BOLD)
+        stdscr.addstr(y_pos, 0, tmux_cpu_str, tmux_cpu_color | curses.A_BOLD)
+        stdscr.addstr(y_pos, 25, tmux_mem_str, tmux_mem_color | curses.A_BOLD)
         y_pos += 2
 
         separator = "-" * (width - 1)
@@ -1044,22 +1145,30 @@ class TmuxResourceMonitor:
 
             current_y = y_pos + line_idx
 
-            ram_mb = session.ram_total // 1024
+            ram_mb = session.ram_total / 1024
             ram_percent = (
                 (session.ram_total * 100) / (self.total_ram_mb * 1024)
                 if self.total_ram_mb > 0
                 else 0
             )
 
+            # Format memory with GB if >= 1024 MB
+            if ram_mb >= 1024:
+                ram_display = f"{ram_mb / 1024:>5.1f}GB"
+            else:
+                ram_display = f"{ram_mb:>6.1f}MB"
+
             is_selected = self.browse_sessions and idx == self.selected_session_index
 
             prefix = "» " if is_selected else "  "
-            row = f"{prefix}{session.name[:18]:<20} {session.cpu_total:>7.1f}% {ram_mb:>6d}MB({ram_percent:>4.1f}%) {session.process_count:>7} {session.window_count:>6}"
+            row = f"{prefix}{session.name[:18]:<20} {session.cpu_total:>7.1f}% {ram_display}({ram_percent:>4.1f}%) {session.process_count:>7} {session.window_count:>6}"
 
             if is_selected:
                 color = curses.color_pair(2) | curses.A_REVERSE | curses.A_BOLD
-            elif session.cpu_total > 20 or ram_percent > 10:
-                color = curses.color_pair(4)
+            elif session.cpu_total > 50 or ram_percent > 50:
+                color = curses.color_pair(4)  # Red - high usage
+            elif session.cpu_total > 20 or ram_percent > 20:
+                color = curses.color_pair(2)  # Yellow - medium usage
             else:
                 color = curses.color_pair(1) if idx % 2 == 0 else curses.color_pair(0)
 
@@ -1578,7 +1687,12 @@ class TmuxResourceMonitor:
                         if width > len(footer):
                             stdscr.addstr(height - 1, 0, footer, curses.color_pair(5))
                         else:
-                            stdscr.addstr(height - 1, 0, "q=quit j/k=browse Enter=select", curses.color_pair(5))
+                            stdscr.addstr(
+                                height - 1,
+                                0,
+                                "q=quit j/k=browse Enter=select",
+                                curses.color_pair(5),
+                            )
                     else:
                         # Render session detail mode
                         y_pos = self.draw_header(stdscr, height, width)
