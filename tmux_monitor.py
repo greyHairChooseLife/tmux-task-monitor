@@ -1054,36 +1054,53 @@ class TmuxResourceMonitor:
             return False
     
     def copy_to_clipboard(self, text):
-        """Copy text to clipboard using available clipboard tools (Wayland/X11)."""
-        def try_command(cmd):
-            process = None
+        """Copy text to clipboard using available clipboard tools (Wayland/X11).
+        Runs asynchronously to prevent UI freezing."""
+        def async_copy():
+            """Run clipboard copy in background thread with timeout."""
+            # Try wl-copy first (Wayland)
             try:
-                process = subprocess.Popen(
-                    cmd,
-                    stdin=subprocess.PIPE,
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.DEVNULL
+                subprocess.run(
+                    ['wl-copy'],
+                    input=text.encode('utf-8'),
+                    timeout=1.0,
+                    capture_output=True,
+                    check=True
                 )
-                stdout, stderr = process.communicate(input=text.encode('utf-8'))
-                return process.returncode == 0
-            except FileNotFoundError:
-                return False
-            except Exception as e:
-                return False
-        
-        # Try wl-copy first (Wayland)
-        if try_command(['wl-copy']):
-            return True
-        
-        # Fallback to xclip (X11)
-        if try_command(['xclip', '-selection', 'clipboard']):
-            return True
-        
-        # Fallback to xsel (X11)
-        if try_command(['xsel', '--clipboard', '--input']):
-            return True
-        
-        return False
+                return
+            except (FileNotFoundError, subprocess.TimeoutExpired, subprocess.CalledProcessError):
+                pass
+
+            # Fallback to xclip (X11)
+            try:
+                subprocess.run(
+                    ['xclip', '-selection', 'clipboard'],
+                    input=text.encode('utf-8'),
+                    timeout=1.0,
+                    capture_output=True,
+                    check=True
+                )
+                return
+            except (FileNotFoundError, subprocess.TimeoutExpired, subprocess.CalledProcessError):
+                pass
+
+            # Fallback to xsel (X11)
+            try:
+                subprocess.run(
+                    ['xsel', '--clipboard', '--input'],
+                    input=text.encode('utf-8'),
+                    timeout=1.0,
+                    capture_output=True,
+                    check=True
+                )
+                return
+            except (FileNotFoundError, subprocess.TimeoutExpired, subprocess.CalledProcessError):
+                pass
+
+        # Start async copy in daemon thread
+        thread = threading.Thread(target=async_copy, daemon=True)
+        thread.start()
+        return True
     
     def copy_process_command(self):
         """Copy the selected process's command to clipboard."""
