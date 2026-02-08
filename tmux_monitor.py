@@ -637,6 +637,8 @@ class TmuxResourceMonitor:
                 if total_cpu > 80
                 else curses.color_pair(2)
                 if total_cpu > 50
+                else curses.color_pair(1)
+                if total_cpu > 5
                 else curses.color_pair(0)
             )
             mem_color = (
@@ -644,6 +646,8 @@ class TmuxResourceMonitor:
                 if total_ram_percent > 80
                 else curses.color_pair(2)
                 if total_ram_percent > 50
+                else curses.color_pair(1)
+                if total_ram_percent > 5
                 else curses.color_pair(0)
             )
 
@@ -878,6 +882,8 @@ class TmuxResourceMonitor:
                         cpu_color = curses.color_pair(4)  # Red
                     elif cpu > 20:
                         cpu_color = curses.color_pair(2)  # Yellow
+                    elif cpu > 5:
+                        cpu_color = curses.color_pair(1)  # Green
                     else:
                         cpu_color = curses.color_pair(0)  # Default
                     stdscr.addstr(y_pos, len(pid_str), cpu_str, cpu_color)
@@ -889,6 +895,8 @@ class TmuxResourceMonitor:
                         mem_color = curses.color_pair(4)  # Red
                     elif mem_percent > 10:
                         mem_color = curses.color_pair(2)  # Yellow
+                    elif mem_percent > 5:
+                        mem_color = curses.color_pair(1)  # Green
                     else:
                         mem_color = curses.color_pair(0)  # Default
                     stdscr.addstr(y_pos, len(pid_str) + len(cpu_str), mem_str, mem_color)
@@ -952,6 +960,8 @@ class TmuxResourceMonitor:
             total_color = curses.color_pair(4) | curses.A_BOLD  # Red
         elif window.cpu_total > 50 or window_ram_percent > 50:
             total_color = curses.color_pair(2) | curses.A_BOLD  # Yellow
+        elif window.cpu_total > 5 or window_ram_percent > 5:
+            total_color = curses.color_pair(1) | curses.A_BOLD  # Green
         else:
             total_color = curses.color_pair(0) | curses.A_BOLD  # Default
 
@@ -1064,6 +1074,8 @@ class TmuxResourceMonitor:
             if self.system_cpu_percent > 80
             else curses.color_pair(2)
             if self.system_cpu_percent > 50
+            else curses.color_pair(1)
+            if self.system_cpu_percent > 5
             else curses.color_pair(0)
         )
         sys_mem_color = (
@@ -1071,6 +1083,8 @@ class TmuxResourceMonitor:
             if self.system_memory_percent > 80
             else curses.color_pair(2)
             if self.system_memory_percent > 50
+            else curses.color_pair(1)
+            if self.system_memory_percent > 5
             else curses.color_pair(0)
         )
 
@@ -1087,6 +1101,8 @@ class TmuxResourceMonitor:
             if self.tmux_cpu_percent > 80
             else curses.color_pair(2)
             if self.tmux_cpu_percent > 50
+            else curses.color_pair(1)
+            if self.tmux_cpu_percent > 5
             else curses.color_pair(0)
         )
         tmux_mem_color = (
@@ -1094,6 +1110,8 @@ class TmuxResourceMonitor:
             if self.tmux_memory_percent > 80
             else curses.color_pair(2)
             if self.tmux_memory_percent > 50
+            else curses.color_pair(1)
+            if self.tmux_memory_percent > 5
             else curses.color_pair(0)
         )
 
@@ -1164,6 +1182,8 @@ class TmuxResourceMonitor:
                 color = curses.color_pair(4)  # Red - high usage
             elif session.cpu_total > 50 or ram_percent > 50:
                 color = curses.color_pair(2)  # Yellow - medium usage
+            elif session.cpu_total > 5 or ram_percent > 5:
+                color = curses.color_pair(1)  # Green - low usage
             else:
                 color = curses.color_pair(0)  # Default
 
